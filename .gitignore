@@ -1,0 +1,5 @@
+# Default ignored files
+/.idea
+
+# Ignore all DS_Store files in the project
+.DS_Store
