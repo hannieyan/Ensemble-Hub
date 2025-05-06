@@ -9,22 +9,22 @@ from utils import run_zscore_ensemble, ModelStatStore
 
 # 加载 MATH-500 的问题文本作为参考数据集
 math_dataset = load_dataset(
-    "/mnt/data/zichuanfu/.cache/huggingface/hub/datasets--HuggingFaceH4--MATH-500/snapshots/ff5b20257d8185524591543f8ff5993951537bb8",
+    "HuggingFaceH4/MATH-500",
     split="test"
 )
 math_problems = [x["problem"] for x in math_dataset]
 
 # 模型配置
 model_specs = [
-    {"path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35", "engine": "hf", "device": "cuda:0"},
-    {"path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-1.5B/snapshots/ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562", "engine": "hf", "device": "cuda:1"},
-    {"path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-7B-Instruct/snapshots/ef9926d75ab1d54532f6a30dd5e760355eb9aa4d", "engine": "hf", "device": "cuda:2"},
-    {"path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B/snapshots/916b56a44061fd5cd7d6a8fb632557ed4f724f60", "engine": "hf", "device": "cuda:3"},
-    {"path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-14B/snapshots/1df8507178afcc1bef68cd8c393f61a886323761", "engine": "hf", "device": "cuda:4"},
+    {"path": "Qwen/Qwen2.5-Math-1.5B-Instruct", "engine": "hf", "device": "cuda:0"},
+    {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
+    {"path": "Qwen/Qwen2.5-Math-7B-Instruct", "engine": "hf", "device": "cuda:2"},
+    {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cuda:3"},
+    {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "engine": "hf", "device": "cuda:4"},
 ]
 
 reward_spec = {
-    "path": "/mnt/data/zichuanfu/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-PRM-7B/snapshots/0610740060112df12585d00a1c5f4624d2f59051",
+    "path": "Qwen/Qwen2.5-Math-PRM-7B",
     "device": "cuda:5"
 }
 
@@ -55,7 +55,7 @@ def run_batch_inference(
         answer = example["output"].strip()
 
         # 构造完整 prompt
-        prompt = f"system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.\nuser\n{instruction}\n{question}\nassistant\n"
+        prompt = f"<｜User｜>{instruction}\n{question}<｜Assistant｜>"
 
         try:
             result = run_zscore_ensemble(
