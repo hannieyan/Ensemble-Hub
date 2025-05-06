@@ -84,3 +84,4 @@ Use Qwen/Qwen2.5-Math-1.5B-Instruct to continue reasoning about the truncated co
 
 
 
+llamafactory-cli api --model_name_or_path xxx --template xx --stage rm
