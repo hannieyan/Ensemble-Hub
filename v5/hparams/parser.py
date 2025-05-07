@@ -44,7 +44,7 @@ from .training_args import RayArguments, TrainingArguments
 
 logger = logging.get_logger(__name__)
 
-# check_dependencies()
+check_dependencies()
 
 
 _TRAIN_ARGS = [ModelArguments, DataArguments, TrainingArguments, FinetuningArguments, GeneratingArguments]

@@ -83,5 +83,15 @@ Use Qwen/Qwen2.5-Math-1.5B-Instruct to continue reasoning about the truncated co
 
 
 
+```
+llamafactory-cli api --model_name_or_path Qwen/Qwen2.5-1.5B-Instruct  --reward_model saves/qwen2.5-7b/lora/reward  --template qwen  --stage rm
+```
 
-llamafactory-cli api --model_name_or_path xxx --template xx --stage rm
+
+
+```
+curl -X POST -H "Content-Type: application/json" -d '{"model": "your_reward_model_id", "messages": ["一段文本", "第二段文本"]}' http://localhost:8000/v1/score/evaluation
+```
+
+
+
