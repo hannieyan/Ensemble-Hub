@@ -32,7 +32,7 @@ logger = logging.getLogger("ensemble_inference")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EOS_TEXT = ""  # Most Qwen / Llama models use empty string as EOS
 STEP_TOKEN = "<extra_0>"  # Token separator used by reward model
-SYSTEM_PROMPT = "You are a helpful assistant."
+SYSTEM_PROMPT = "Solve the following math problem step by step. Write your reasoning clearly using LaTeX. Box the final answer using \\boxed{}."
 STOP_TOKENS_TEXT = {".", "\n"}  # Stop decoding after these tokens
 
 
