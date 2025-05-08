@@ -1,33 +1,11 @@
 from __future__ import annotations
 
 import logging
-import re
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-
+from typing import Dict, List
 import torch
 
+from v6.generator import BaseGenerator
 
-from transformers import (
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    GenerationConfig,
-)
-
-from v6.data.template import get_template_and_fix_tokenizer
-from v6.hparams import DataArguments
-from v6.data.converter import AlpacaDatasetConverter
-from types import SimpleNamespace
-from v6.scorer import PRMScorer
-
-# Optional vLLM backend -----------------------------------------------------
-try:
-    from vllm import LLM, SamplingParams  # type: ignore
-
-    _VLLM_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _VLLM_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Logging / constants
@@ -36,10 +14,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("ensemble_inference")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EOS_TEXT = ""  # Most Qwen / Llama models use empty string as EOS
-
 SYSTEM_PROMPT = "Solve the following math problem step by step. Write your reasoning clearly using LaTeX. Box the final answer using \\boxed{}."
-STOP_TOKENS_TEXT = {".", "\n"}  # Stop decoding after these tokens
 
 
 # ---------------------------------------------------------------------------
@@ -100,189 +75,6 @@ class ConversationTemplate:
 
 
 
-# ---------------------------------------------------------------------------
-# Utility: trim text at the last occurrence of stop tokens
-# ---------------------------------------------------------------------------
-
-def _trim_text(txt: str) -> str:
-    """Truncate the text after the last known stop token for cleaner outputs."""
-    best_pos = -1
-    best_tok = None
-    for tok in STOP_TOKENS_TEXT:
-        pos = txt.rfind(tok)
-        if pos > best_pos:
-            best_pos = pos
-            best_tok = tok
-    if best_pos != -1:
-        return txt[: best_pos + len(best_tok)]
-    return txt
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# Output container for model generation
-# ---------------------------------------------------------------------------
-
-@dataclass
-class GenOutput:
-    text: str
-    ended_with_eos: bool  # Whether EOS token was generated
-
-
-# ---------------------------------------------------------------------------
-# Abstract base class for any generator (HF or vLLM)
-# ---------------------------------------------------------------------------
-
-class BaseGenerator:
-    name: str
-
-    def generate(self, prompt: str, **kw) -> GenOutput:
-        """Abstract method for generating model outputs."""
-        raise NotImplementedError
-
-
-# ---------------------------------------------------------------------------
-# HuggingFace Transformers-based Generator
-# ---------------------------------------------------------------------------
-
-class HFGenerator(BaseGenerator):
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16):
-        self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            path,
-            torch_dtype=dtype,
-            device_map=device,
-            trust_remote_code=True
-        ).eval()
-        self.name = path
-        self.device = next(self.model.parameters()).device if device == "auto" else torch.device(device)
-
-        # Optional stop string list
-        self.stop_strings = list(STOP_TOKENS_TEXT) + [
-            self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
-        ]
-
-        if "qwen3" in path.lower():
-            data_args = DataArguments(template="qwen3")
-        elif "qwen" in path.lower():
-            data_args = DataArguments(template="qwen")
-        elif "deepseek" in path.lower():
-            data_args = DataArguments(template="deepseek3")
-
-        dataset_attr = SimpleNamespace(
-            prompt="instruction",
-            query="input",
-            response="output",
-            history=None,
-            kto_tag=None,
-            ranking=False,
-            chosen=None,
-            rejected=None,
-            system=None,
-            tools=None,
-            images=None,
-            videos=None,
-            audios=None,
-            load_from="file",
-            formatting="alpaca",
-        )
-
-        self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=data_args)
-
-        self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
-
-    @torch.inference_mode()
-    def generate(self, dicts, *, max_tokens=64, temperature=0.95, top_p=0.7) -> GenOutput:
-
-        converted = self.converter(dicts)
-        prompt_msgs = converted["_prompt"]
-        response_msgs = converted["_response"]
-        messages = prompt_msgs + response_msgs
-        prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages)
-
-        ids = prompt_ids + response_ids[:-2]
-
-        text = self.tokenizer.decode(ids, skip_special_tokens=False)
-
-        ids = self.tokenizer(text, return_tensors="pt").to(self.device)
-        cfg = GenerationConfig(
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            max_new_tokens=max_tokens,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
-        out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
-        ended = bool(self.tokenizer.eos_token_id in out[len(ids["input_ids"][0]):])
-        txt = self.tokenizer.decode(out[len(ids["input_ids"][0]):], skip_special_tokens=False)
-
-        return GenOutput(_trim_text(txt) if not ended else txt, ended)
-
-
-# ---------------------------------------------------------------------------
-# vLLM-based Generator
-# ---------------------------------------------------------------------------
-
-class VLLMGenerator(BaseGenerator):
-    def __init__(self, path: str):
-        if not _VLLM_AVAILABLE:
-            raise RuntimeError("vLLM is not installed.")
-        self._llm = LLM(model=path)
-        self._sp = SamplingParams(max_tokens=128, temperature=0.95, top_p=0.7, stop=list(STOP_TOKENS_TEXT))
-        self.name = path
-        self._eos_text = EOS_TEXT
-
-    @torch.inference_mode()
-    def generate(self, prompt: str, *, max_tokens=30, temperature=0.95, top_p=0.7) -> GenOutput:
-        self._sp.max_tokens, self._sp.temperature, self._sp.top_p = max_tokens, temperature, top_p
-        txt = self._llm.generate([prompt], self._sp)[0].outputs[0].text
-        ended = txt.endswith(self._eos_text)
-        return GenOutput(_trim_text(txt), ended)
-
-
-# ---------------------------------------------------------------------------
-# ModelPool: caches all loaded generators and reward models
-# ---------------------------------------------------------------------------
-
-class ModelPool:
-    _gen_cache: Dict[Tuple[str, str], BaseGenerator] = {}
-    _reward_cache: Dict[str, str] = {}
-
-    @classmethod
-    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None) -> BaseGenerator:
-        """
-        Load a generator model (e.g., HF or vLLM) to a specified device (e.g., 'cuda:0', 'cpu').
-        """
-        key = (engine, path)
-        if key not in cls._gen_cache:
-            logger.info("[Pool] loading %s (%s)", path, engine)
-
-            resolved_device = device or "auto"
-            logger.info(f"→ Assigned to device: {resolved_device}")
-
-            if engine == "hf":
-                cls._gen_cache[key] = HFGenerator(path, device=resolved_device)
-            elif engine == "vllm":
-                cls._gen_cache[key] = VLLMGenerator(path)  # vLLM usually uses global config
-            else:
-                raise ValueError(f"Unknown engine: {engine}")
-        return cls._gen_cache[key]
-
-    @classmethod
-    def get_reward(cls, path: str, device: Optional[str] = None) -> "PRMScorer":
-        """
-        Load a reward model to a specified device (e.g., 'cuda:0', 'cpu').
-        """
-        if path not in cls._reward_cache:
-            logger.info("[Pool] loading reward model %s", path)
-            resolved_device = device or "auto"
-            logger.info(f"→ Reward model assigned to device: {resolved_device}")
-            cls._reward_cache[path] = PRMScorer(path, device=resolved_device)
-        return cls._reward_cache[path]
-
-
 
 
 
@@ -291,13 +83,14 @@ class ModelPool:
 # ---------------------------------------------------------------------------
 
 class EnsembleReasoner:
-    def __init__(self, generators: List[BaseGenerator], scorer, max_rounds: int = 500,
+    def __init__(self, generators: List[BaseGenerator], scorers, max_rounds: int = 500,
                  score_threshold: float = 0.5, accumulate_context: bool = True):
         self.generators = generators
-        self.scorer = scorer
+        self.scorers = scorers
         self.max_rounds = max_rounds
         self.score_threshold = score_threshold
         self.accumulate_context = accumulate_context
+
 
     def __call__(self, example) -> str:
         """
@@ -344,6 +137,13 @@ class EnsembleReasoner:
                 outs = list(executor.map(lambda g: g.generate(dicts), available_gens))
             # ───────────────────────────────────────────────────────────────────
 
+            filtered = [(g, o) for g, o in zip(available_gens, outs) if is_valid_segment(o.text)]
+            if not filtered:
+                logger.info("No valid outputs from generators; skipping this round.")
+                continue
+            available_gens, outs = zip(*filtered)
+            segs = [o.text for o in outs]
+
             # 更新各模型 EOS 状态
             for g, o in zip(available_gens, outs):
                 if o.ended_with_eos:
@@ -353,8 +153,7 @@ class EnsembleReasoner:
                 break
 
             # 计算奖励分数
-            segs = [o.text for o in outs]
-            scores = self.scorer.score(prompt, segs)
+            scores = self.scorers.score(prompt, segs)
 
             for g, t, s in zip(available_gens, segs, scores):
                 logger.info(f"→ {g.name} | {s:.2f} | {t.replace(chr(10), '\\n')}")
@@ -376,6 +175,7 @@ class EnsembleReasoner:
             # ──────────────────────────────────────────────────────────────────
 
             convo.add_assistant(best_out.text)
+            logger.info("Updated conversation:\n%s", convo.render())
 
             # 若本轮最佳候选已输出 EOS，也可直接终止
             if best_out.ended_with_eos:
@@ -385,6 +185,20 @@ class EnsembleReasoner:
         return "\n".join(convo.assistant_parts)
 
 
-
-
+def is_valid_segment(text: str, min_len: int = 5) -> bool:
+    import string
+    import re
+    stripped = text.strip()
+    if len(stripped) < min_len:
+        return False
+    if not stripped or stripped.isspace():
+        return False
+    if all(c in string.punctuation + string.whitespace for c in stripped):
+        return False
+    cleaned = re.sub(r"\s+", "", stripped)
+    if len(set(cleaned)) <= 2:
+        return False
+    if re.search(r"(.)\1{4,}", cleaned):
+        return False
+    return True
 

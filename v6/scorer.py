@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -30,14 +30,12 @@ def _step_rewards(logits: torch.Tensor, mask: torch.Tensor):
     return arr
 
 
-
-
 # ---------------------------------------------------------------------------
 # Abstract base class for scorer
 # ---------------------------------------------------------------------------
 
 class BaseScorer:
-    def score(self, question: str, answer: List[str]) -> float:
+    def score(self, question: str, answer: List[str]) -> List[float]:
         raise NotImplementedError("Score method must be implemented by subclass.")
 
 
@@ -82,10 +80,10 @@ class APIScorer(BaseScorer):
 # ---------------------------------------------------------------------------
 
 class PRMScorer(BaseScorer):
-    def __init__(self, path: str, device: str = "auto"):
-        self.tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+    def __init__(self, model_path: str, device: str = "auto"):
+        self.tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         self.mod = AutoModel.from_pretrained(
-            path,
+            model_path,
             torch_dtype=torch.bfloat16,
             device_map=device,
             trust_remote_code=True
@@ -107,5 +105,66 @@ class PRMScorer(BaseScorer):
         return [float(sum(p) / len(p) * 10.0) if p else 0.0 for p in probs]
 
 
+# ---------------------------------------------------------------------------
+# ScorerPool: manages multiple reward scorers and scoring logic
+# ---------------------------------------------------------------------------
 
+class ScorerPool:
+    _scorer_cache: Dict[str, Tuple[BaseScorer, float]] = {}
+
+    @classmethod
+    def get_scorer(cls, spec: Dict[str, str]) -> BaseScorer:
+        """
+        Load a reward scorer and cache it. Also print the key.
+        """
+        key = f"{spec['engine']}::{spec['path']}"
+        if key in cls._scorer_cache:
+            return cls._scorer_cache[key][0]
+
+        engine = spec["engine"]
+        weight = spec.get("weight", 1.0)
+        if engine == "hf":
+            scorer = PRMScorer(model_path=spec["path"], device=spec.get("device", "cuda"))
+        elif engine == "api":
+            scorer = APIScorer(endpoint=spec["path"])
+        else:
+            raise ValueError(f"Unknown scorer engine: {engine}")
+
+        cls._scorer_cache[key] = (scorer, weight)
+        print(f"[ScorerPool] Added scorer: {key}")
+        return scorer
+
+    @classmethod
+    def del_scorer(cls, key: str):
+        if key in cls._scorer_cache:
+            del cls._scorer_cache[key]
+            print(f"[ScorerPool] Removed scorer: {key}")
+
+    @classmethod
+    def score(cls, prompt: str, completions: List[str], keys: Optional[List[str]] = None) -> List[float]:
+        """
+        Score completions using selected or all scorers, apply min-max normalization and weighted average.
+        """
+        selected_items = (
+            {k: cls._scorer_cache[k] for k in keys if k in cls._scorer_cache}
+            if keys else cls._scorer_cache
+        )
+
+        if not selected_items:
+            raise ValueError("No valid scorers selected.")
+
+        all_weighted_scores = []
+        total_weight = sum(weight for (_, weight) in selected_items.values())
+
+        for key, (scorer, weight) in selected_items.items():
+            scores = scorer.score(prompt, completions)
+            normalized_w = weight / total_weight if total_weight > 0 else 0.0
+            all_weighted_scores.append([s * normalized_w for s in scores])
+
+        final_scores = []
+        for i in range(len(completions)):
+            combined = sum(scores[i] for scores in all_weighted_scores)
+            final_scores.append(combined)
+
+        return final_scores
 

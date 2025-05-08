@@ -6,9 +6,9 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 
-from v6.ensemble import ModelPool, EnsembleReasoner, ConversationTemplate
-
-
+from v6.ensemble import EnsembleReasoner, ConversationTemplate
+from v6.generator import GeneratorPool
+from v6.scorer import ScorerPool
 
 # Optional vLLM backend -----------------------------------------------------
 try:
@@ -137,14 +137,15 @@ def run_zscore_ensemble(
     example: Dict,
     dataset_problems: List[str],
     model_specs: List[Dict],
-    reward_spec: Dict,
+    reward_spec: List[Dict],
     stat_store: ModelStatStore,
     max_rounds: int = 500,
     score_threshold: float = 0.5
 ) -> str:
 
     logger.info("[Stage 1] Computing or retrieving reference statistics for all models...")
-    model_pool = ModelPool()
+    model_pool = GeneratorPool()
+    scorers = ScorerPool()
     model_stats = {}
     for spec in model_specs:
         model_path = spec["path"]
@@ -175,12 +176,16 @@ def run_zscore_ensemble(
         model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
         for spec in selected_specs
     ]
-    scorer = model_pool.get_reward(reward_spec["path"], device=reward_spec["device"])
+    # scorers =
+    # scorer = scorer_pool.get_reward(reward_spec["path"], device=reward_spec["device"])
+
+    for spec in reward_spec:
+        scorers.get_scorer(spec)
 
     logger.info("[Stage 4] Running ensemble reasoner...")
     reasoner = EnsembleReasoner(
         generators=generators,
-        scorer=scorer,
+        scorers=scorers,
         max_rounds=max_rounds,
         score_threshold=score_threshold
     )
