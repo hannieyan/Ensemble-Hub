@@ -16,9 +16,9 @@ math_problems = [x["problem"] for x in math_dataset]
 
 # 模型配置
 model_specs = [
-    {"path": "Qwen/Qwen2.5-Math-1.5B-Instruct", "engine": "hf", "device": "cuda:0"},
+    # {"path": "Qwen/Qwen2.5-Math-1.5B-Instruct", "engine": "hf", "device": "cuda:0"},
     # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
-    {"path": "Qwen/Qwen2.5-Math-1.5B-Instruct", "engine": "hf", "device": "cuda:0"},
+    {"path": "Qwen/Qwen3-4B", "engine": "hf", "device": "cuda:0"},
     # {"path": "Qwen/Qwen2.5-Math-7B-Instruct", "engine": "hf", "device": "cuda:2"},
     # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cuda:3"},
     # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "engine": "hf", "device": "cuda:4"},
@@ -26,7 +26,7 @@ model_specs = [
 
 reward_spec = {
     "path": "Qwen/Qwen2.5-Math-PRM-7B",
-    "device": "cuda:5"
+    "device": "cuda:0"
 }
 
 def load_dataset_json(input_path: str) -> list:

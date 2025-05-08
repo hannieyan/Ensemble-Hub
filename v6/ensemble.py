@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import torch
-import torch.nn.functional as F
+
+
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -18,6 +19,7 @@ from v6.data.template import get_template_and_fix_tokenizer
 from v6.hparams import DataArguments
 from v6.data.converter import AlpacaDatasetConverter
 from types import SimpleNamespace
+from v6.scorer import PRMScorer
 
 # Optional vLLM backend -----------------------------------------------------
 try:
@@ -35,7 +37,7 @@ logger = logging.getLogger("ensemble_inference")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EOS_TEXT = ""  # Most Qwen / Llama models use empty string as EOS
-STEP_TOKEN = "<extra_0>"  # Token separator used by reward model
+
 SYSTEM_PROMPT = "Solve the following math problem step by step. Write your reasoning clearly using LaTeX. Box the final answer using \\boxed{}."
 STOP_TOKENS_TEXT = {".", "\n"}  # Stop decoding after these tokens
 
@@ -83,6 +85,20 @@ class ConversationTemplate:
         }
         return dicts
 
+    def render_list(self) -> list[dict[str, str]]:
+        """
+        Render the full prompt to be fed into a language model.
+        It includes the system message, user input, and accumulated assistant responses.
+        """
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": self.question.strip()},
+            {"role": "assistant", "content": "".join(self.assistant_parts)},
+        ]
+
+        return messages
+
+
 
 # ---------------------------------------------------------------------------
 # Utility: trim text at the last occurrence of stop tokens
@@ -102,21 +118,7 @@ def _trim_text(txt: str) -> str:
     return txt
 
 
-# ---------------------------------------------------------------------------
-# Utility: extract token-level reward scores from logits
-# ---------------------------------------------------------------------------
 
-def _step_rewards(logits: torch.Tensor, mask: torch.Tensor):
-    """
-    Compute step-wise probabilities using softmax over logits.
-    Only consider positions where mask is non-zero (STEP_TOKEN positions).
-    """
-    probs = F.softmax(logits, dim=-1) * mask.unsqueeze(-1)
-    arr: List[List[float]] = []
-    for sample in probs:
-        pos = sample[sample != 0].view(-1, 2)[:, 1]
-        arr.append(pos.cpu().tolist())
-    return arr
 
 
 # ---------------------------------------------------------------------------
@@ -281,49 +283,7 @@ class ModelPool:
         return cls._reward_cache[path]
 
 
-# ---------------------------------------------------------------------------
-# PRMScorer: reward model used for evaluating step-level outputs
-# ---------------------------------------------------------------------------
 
-class PRMScorer:
-    def __init__(self, path: str, device: str = "auto"):
-        self.tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        self.mod = AutoModel.from_pretrained(
-            path,
-            torch_dtype=torch.bfloat16,
-            device_map=device,
-            trust_remote_code=True
-        ).eval()
-        self.sep_id = self.tok.encode(STEP_TOKEN)[0]
-
-    @torch.inference_mode()
-    def score(self, question: str, answer: str) -> float:
-        """Compute reward score from model output at STEP_TOKEN positions."""
-        if not answer.endswith(STEP_TOKEN):
-            answer += STEP_TOKEN
-        msgs = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": answer},
-        ]
-        convo = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-        ids = self.tok(convo, return_tensors="pt").input_ids
-        mask = ids == self.sep_id
-        probs = _step_rewards(self.mod(ids).logits, mask)[0]
-        return float(sum(probs) / len(probs) * 10.0) if probs else 0.0
-
-    @torch.inference_mode()
-    def score_batch_augmented(self, prompt: str, completions: List[str]) -> List[float]:
-        """
-        Efficiently score a batch of completions using the format:
-        [prompt + STEP_TOKEN + completion + STEP_TOKEN]
-        """
-        inputs = [prompt + STEP_TOKEN + c + STEP_TOKEN for c in completions]
-        enc = self.tok(inputs, return_tensors="pt", padding=True, truncation=True).to(self.mod.device)
-        mask = enc["input_ids"] == self.sep_id
-        logits = self.mod(**enc).logits
-        probs = _step_rewards(logits, mask)
-        return [float(sum(p) / len(p) * 10.0) if p else 0.0 for p in probs]
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +291,7 @@ class PRMScorer:
 # ---------------------------------------------------------------------------
 
 class EnsembleReasoner:
-    def __init__(self, generators: List[BaseGenerator], scorer: PRMScorer, max_rounds: int = 500,
+    def __init__(self, generators: List[BaseGenerator], scorer, max_rounds: int = 500,
                  score_threshold: float = 0.5, accumulate_context: bool = True):
         self.generators = generators
         self.scorer = scorer
@@ -394,7 +354,7 @@ class EnsembleReasoner:
 
             # 计算奖励分数
             segs = [o.text for o in outs]
-            scores = self.scorer.score_batch_augmented(prompt, segs)
+            scores = self.scorer.score(prompt, segs)
 
             for g, t, s in zip(available_gens, segs, scores):
                 logger.info(f"→ {g.name} | {s:.2f} | {t.replace(chr(10), '\\n')}")
