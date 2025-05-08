@@ -5,7 +5,7 @@ from pathlib import Path
 from tqdm import tqdm
 from datasets import load_dataset
 
-from v5.utils import run_zscore_ensemble, ModelStatStore
+from v6.utils import run_zscore_ensemble, ModelStatStore
 
 # 加载 MATH-500 的问题文本作为参考数据集
 math_dataset = load_dataset(

@@ -14,9 +14,9 @@ from transformers import (
     GenerationConfig,
 )
 
-from v4.data.template import get_template_and_fix_tokenizer
-from v4.hparams import DataArguments
-from v4.data.converter import AlpacaDatasetConverter
+from v6.data.template import get_template_and_fix_tokenizer
+from v6.hparams import DataArguments
+from v6.data.converter import AlpacaDatasetConverter
 from types import SimpleNamespace
 
 # Optional vLLM backend -----------------------------------------------------

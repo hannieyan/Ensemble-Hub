@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 
-from v5.ensemble import ModelPool, EnsembleReasoner, ConversationTemplate
+from v6.ensemble import ModelPool, EnsembleReasoner, ConversationTemplate
 
 
 
