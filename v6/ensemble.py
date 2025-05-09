@@ -175,7 +175,7 @@ class EnsembleReasoner:
             # ──────────────────────────────────────────────────────────────────
 
             convo.add_assistant(best_out.text)
-            logger.info("Updated conversation:\n%s", convo.render())
+            # logger.info("Updated conversation:\n%s", convo.render())
 
             # 若本轮最佳候选已输出 EOS，也可直接终止
             if best_out.ended_with_eos:

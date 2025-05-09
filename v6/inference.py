@@ -17,7 +17,7 @@ math_problems = [x["problem"] for x in math_dataset]
 # 模型配置
 model_specs = [
     # {"path": "Qwen/Qwen2.5-Math-1.5B-Instruct", "engine": "hf", "device": "cuda:0"},
-    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
+    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:0"},
     {"path": "Qwen/Qwen3-4B", "engine": "hf", "device": "cuda:0"},
     # {"path": "Qwen/Qwen2.5-Math-7B-Instruct", "engine": "hf", "device": "cuda:3"},
     # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cuda:4"},

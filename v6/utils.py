@@ -9,6 +9,7 @@ from loguru import logger
 from v6.ensemble import EnsembleReasoner, ConversationTemplate
 from v6.generator import GeneratorPool
 from v6.scorer import ScorerPool
+from v6.statistics.compute_model_stats import ModelStatStore
 
 # Optional vLLM backend -----------------------------------------------------
 try:
@@ -30,57 +31,6 @@ STEP_TOKEN = "<extra_0>"  # Token separator used by reward model
 SYSTEM_PROMPT = "You are a helpful assistant."
 STOP_TOKENS_TEXT = {".", "\n"}  # Stop decoding after these tokens
 
-
-# Assumes SYSTEM_PROMPT and ConversationTemplate already defined
-
-class ModelStatStore:
-    def __init__(self):
-        self._stats: Dict[str, Dict[str, float]] = {}
-
-    def has(self, model_path: str) -> bool:
-        return model_path in self._stats
-
-    def get(self, model_path: str) -> Dict[str, float]:
-        return self._stats[model_path]
-
-    def set(self, model_path: str, stats: Dict[str, float]):
-        self._stats[model_path] = stats
-
-    def maybe_compute(self, model_path: str, model, tokenizer, device, dataset: List[str]):
-        if not self.has(model_path):
-            stats = compute_model_stats_on_dataset(model, tokenizer, device, dataset)
-            self.set(model_path, stats)
-        return self.get(model_path)
-
-def compute_model_stats_on_dataset(model, tokenizer, device, dataset: List[str]) -> Dict[str, float]:
-    all_ppls, all_confs = [], []
-    for problem in dataset:
-        inputs = tokenizer(problem, return_tensors="pt").to(device)
-        with torch.inference_mode():
-            outputs = model(**inputs)
-            logits = outputs.logits[:, :-1, :]
-            labels = inputs["input_ids"][:, 1:]
-            log_probs = F.log_softmax(logits, dim=-1)
-            token_log_probs = torch.gather(log_probs, 2, labels.unsqueeze(-1)).squeeze(-1)
-            mask = labels != tokenizer.pad_token_id
-            token_log_probs = token_log_probs[mask]
-            avg_nll = -token_log_probs.mean().item()
-            perplexity = math.exp(avg_nll)
-
-            probs = F.softmax(logits, dim=-1)
-            max_probs = probs.max(dim=-1).values.squeeze(0)
-            mask_flat = mask.squeeze(0)
-            confidence = max_probs[mask_flat].mean().item()
-
-            all_ppls.append(perplexity)
-            all_confs.append(confidence)
-
-    return {
-        "ppl_mean": float(torch.tensor(all_ppls).mean()),
-        "ppl_std": float(torch.tensor(all_ppls).std()),
-        "conf_mean": float(torch.tensor(all_confs).mean()),
-        "conf_std": float(torch.tensor(all_confs).std()),
-    }
 
 def score_question_for_model(question: str, model, tokenizer, device: str, prompt_builder: Callable) -> Dict[str, float]:
     prompt = prompt_builder(question)
@@ -150,7 +100,7 @@ def run_zscore_ensemble(
     for spec in model_specs:
         model_path = spec["path"]
         generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
-        stats = stat_store.maybe_compute(model_path, generator.model, generator.tokenizer, generator.device, dataset_problems)
+        stats = stat_store.compute(model_path, generator.model, generator.tokenizer, generator.device, dataset_problems)
         model_stats[model_path] = stats
         logger.info(
             f"→ Stats for {model_path}: "

@@ -4,6 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+from xml.etree.ElementTree import indent
 
 import torch
 
@@ -100,10 +101,13 @@ class HFGenerator(BaseGenerator):
 
         if "qwen3" in path.lower():
             data_args = DataArguments(template="qwen3")
+            self.indent = 2
         elif "qwen2.5" in path.lower():
             data_args = DataArguments(template="qwen")
+            self.indent = 2
         elif "deepseek-r1" in path.lower():
             data_args = DataArguments(template="deepseek3")
+            self.indent = 1
         else:
             raise NotImplementedError(f"Cannot find model template: {path}")
 
@@ -111,16 +115,6 @@ class HFGenerator(BaseGenerator):
             prompt="instruction",
             query="input",
             response="output",
-            history=None,
-            kto_tag=None,
-            ranking=False,
-            chosen=None,
-            rejected=None,
-            system=None,
-            tools=None,
-            images=None,
-            videos=None,
-            audios=None,
             load_from="file",
             formatting="alpaca",
             dataset_name="",
@@ -139,7 +133,7 @@ class HFGenerator(BaseGenerator):
         messages = prompt_msgs + response_msgs
         prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages)
 
-        ids = prompt_ids + response_ids[:-2]
+        ids = prompt_ids + response_ids[:-self.indent]
 
         text = self.tokenizer.decode(ids, skip_special_tokens=False)
 
