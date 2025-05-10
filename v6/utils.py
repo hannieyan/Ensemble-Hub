@@ -56,7 +56,7 @@ def score_question_for_model(question: str, model, tokenizer, device: str, promp
 def determine_model_count(question_scores: List[Dict[str, float]], model_stats: Dict[str, Dict[str, float]]) -> int:
     over_threshold = 0
     for score, (model_path, stats) in zip(question_scores, model_stats.items()):
-        if score["ppl"] > stats["ppl_mean"] + 2:
+        if score["ppl"] > stats["ppl_mean"]:
             over_threshold += 1
     if over_threshold >= len(question_scores) * 0.90:
         return 3
@@ -96,17 +96,45 @@ def run_zscore_ensemble(
     logger.info("[Stage 1] Computing or retrieving reference statistics for all models...")
     model_pool = GeneratorPool()
     scorers = ScorerPool()
-    model_stats = {}
-    for spec in model_specs:
-        model_path = spec["path"]
-        generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
-        stats = stat_store.compute(model_path, generator.model, generator.tokenizer, generator.device, dataset_problems)
-        model_stats[model_path] = stats
-        logger.info(
-            f"→ Stats for {model_path}: "
-            f"PPL µ={stats['ppl_mean']:.2f}, σ={stats['ppl_std']:.2f} | "
-            f"Conf µ={stats['conf_mean']:.2f}, σ={stats['conf_std']:.2f}"
-        )
+
+    # Compute or retrieve statistics for each model
+    model_stats = {
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {
+            "ppl_mean": 9.795982360839844,
+            "ppl_std": 22.284496307373047,
+            "conf_mean": 0.6799513101577759,
+            "conf_std": 0.08082679659128189
+        },
+        "Qwen/Qwen3-4B": {
+            "ppl_mean": 6.160105228424072,
+            "ppl_std": 6.118084907531738,
+            "conf_mean": 0.8231604099273682,
+            "conf_std": 0.07646501809358597
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
+            "ppl_mean": 16.57339096069336,
+            "ppl_std": 50.37682342529297,
+            "conf_mean": 0.6976740956306458,
+            "conf_std": 0.10360505431890488
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
+            "ppl_mean": 8.22177505493164,
+            "ppl_std": 14.440741539001465,
+            "conf_mean": 0.7438507676124573,
+            "conf_std": 0.0863514393568039
+        }
+    }
+    # model_stats = {}
+    # for spec in model_specs:
+    #     model_path = spec["path"]
+    #     generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
+    #     stats = stat_store.compute(model_path, generator.model, generator.tokenizer, generator.device, dataset_problems)
+    #     model_stats[model_path] = stats
+    #     logger.info(
+    #         f"→ Stats for {model_path}: "
+    #         f"PPL µ={stats['ppl_mean']:.2f}, σ={stats['ppl_std']:.2f} | "
+    #         f"Conf µ={stats['conf_mean']:.2f}, σ={stats['conf_std']:.2f}"
+    #     )
 
 
     logger.info("[Stage 2] Selecting top models based on z-score (auto model count)...")
