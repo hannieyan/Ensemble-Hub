@@ -25,7 +25,7 @@ model_specs = [
 ]
 
 reward_spec = [
-    {"engine": "hf", "path": "Qwen/Qwen2.5-Math-PRM-7B", "device": "cuda:0", "weight": 0.2},
+    # {"engine": "hf", "path": "Qwen/Qwen2.5-Math-PRM-7B", "device": "cuda:0", "weight": 0.2},
     # {"engine": "api", "path": "http://localhost:8000/v1/score/evaluation", "weight": 0.4},
 ]
 

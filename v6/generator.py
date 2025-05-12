@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -77,6 +78,13 @@ class BaseGenerator:
         """Abstract method for generating model outputs."""
         raise NotImplementedError
 
+    def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
+        logger.warning(f"PPL calculation not implemented for {self.name} or called on BaseGenerator base class.")
+        return None
+
+    def calculate_confidence(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
+        logger.warning(f"Confidence calculation not implemented for {self.name} or called on BaseGenerator base class.")
+        return None
 
 # ---------------------------------------------------------------------------
 # HuggingFace Transformers-based Generator
@@ -151,6 +159,87 @@ class HFGenerator(BaseGenerator):
 
         return GenOutput(_trim_text(txt) if not ended else txt, ended)
 
+    @torch.inference_mode()
+    def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
+        if not completion_text.strip():
+            logger.debug(f"PPL calculation for {self.name}: empty completion text.")
+            return None
+
+        try:
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
+            # For completion, typically we don't add special tokens if it's a continuation
+            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
+
+            if completion_token_ids.shape[1] == 0:
+                logger.debug(f"PPL calculation for {self.name}: completion tokenized to empty.")
+                return None
+
+            full_sequence_ids = torch.cat((prompt_token_ids, completion_token_ids), dim=1)
+            attention_mask = torch.ones_like(full_sequence_ids)
+
+            outputs = self.model(input_ids=full_sequence_ids, attention_mask=attention_mask)
+            all_logits = outputs.logits
+
+            shift_logits = all_logits[..., :-1, :].contiguous()
+            shift_labels = full_sequence_ids[..., 1:].contiguous()
+
+            start_index_for_loss = prompt_token_ids.shape[1]
+
+            loss_logits = shift_logits[:, start_index_for_loss:, :]
+            loss_labels = shift_labels[:, start_index_for_loss:]
+
+            if loss_logits.shape[1] == 0 or loss_labels.shape[1] == 0 or loss_logits.shape[1] != loss_labels.shape[1]:
+                logger.debug(f"PPL calculation for {self.name}: no valid tokens for loss or shape mismatch. Logits shape {loss_logits.shape}, Labels shape {loss_labels.shape}")
+                return None
+
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='mean')
+            neg_log_likelihood = loss_fct(loss_logits.view(-1, loss_logits.size(-1)), loss_labels.view(-1))
+
+            if torch.isnan(neg_log_likelihood) or torch.isinf(neg_log_likelihood):
+                logger.warning(f"PPL calculation for {self.name} resulted in NaN/Inf NLL.")
+                return float('inf')
+
+            ppl = math.exp(neg_log_likelihood.item())
+            return ppl
+        except Exception as e:
+            logger.error(f"Error in calculate_ppl for {self.name} with completion '{completion_text[:50]}...': {e}", exc_info=True)
+            return None
+
+    @torch.inference_mode()
+    def calculate_confidence(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
+        if not completion_text.strip():
+            logger.debug(f"Confidence calculation for {self.name}: empty completion text.")
+            return None
+        try:
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
+            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
+
+            if completion_token_ids.shape[1] == 0:
+                logger.debug(f"Confidence calculation for {self.name}: completion tokenized to empty.")
+                return None
+
+            full_sequence_ids = torch.cat((prompt_token_ids, completion_token_ids), dim=1)
+            attention_mask = torch.ones_like(full_sequence_ids)
+
+            outputs = self.model(input_ids=full_sequence_ids, attention_mask=attention_mask)
+            all_logits = outputs.logits
+
+            # Logits corresponding to the prediction of completion tokens
+            # These are logits at positions [L_prompt-1, ..., L_prompt + L_completion - 2]
+            logits_for_completion_steps = all_logits[:, prompt_token_ids.shape[1] - 1: -1, :]
+
+            if logits_for_completion_steps.shape[1] == 0:
+                logger.debug(f"Confidence calculation for {self.name}: no logit steps for completion.")
+                return None
+
+            probs_for_completion_steps = torch.softmax(logits_for_completion_steps, dim=-1)
+            max_prob_at_each_step, _ = torch.max(probs_for_completion_steps, dim=-1)  # Shape: (batch_size, num_completion_tokens)
+
+            confidence = max_prob_at_each_step.mean().item()
+            return confidence
+        except Exception as e:
+            logger.error(f"Error in calculate_confidence for {self.name} with completion '{completion_text[:50]}...': {e}", exc_info=True)
+            return None
 
 # ---------------------------------------------------------------------------
 # vLLM-based Generator

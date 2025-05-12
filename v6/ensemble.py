@@ -144,13 +144,13 @@ class EnsembleReasoner:
             available_gens, outs = zip(*filtered)
             segs = [o.text for o in outs]
 
-            # # 更新各模型 EOS 状态
-            # for g, o in zip(available_gens, outs):
-            #     if o.ended_with_eos:
-            #         eos_flags[g.name] = True
-            # if all(eos_flags.values()):
-            #     logger.info("Early stop: all models have emitted EOS at least once")
-            #     break
+            # 更新各模型 EOS 状态
+            for g, o in zip(available_gens, outs):
+                if o.ended_with_eos:
+                    eos_flags[g.name] = True
+            if all(eos_flags.values()):
+                logger.info("Early stop: all models have emitted EOS at least once")
+                break
 
             # 计算奖励分数
             scores = self.scorers.score(prompt, segs)

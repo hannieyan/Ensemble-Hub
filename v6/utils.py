@@ -159,6 +159,8 @@ def run_zscore_ensemble(
 
     for spec in reward_spec:
         scorers.get_scorer(spec)
+    for generator in generators:
+        scorers.register_scorer(generator, weight=1.0)
 
     logger.info("[Stage 4] Running ensemble reasoner...")
     reasoner = EnsembleReasoner(
