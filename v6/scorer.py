@@ -227,11 +227,11 @@ class ScorerPool:
         """
         selected_items = (
             {k: cls._scorer_cache[k] for k in keys if k in cls._scorer_cache}
-            if keys else cls._scorer_cache
+            if keys is not None else cls._scorer_cache
         )
 
         if not selected_items:
-            raise ValueError("No valid scorers selected.")
+            return [- 0.5] * len(completions)
 
         all_weighted_scores = []
         total_weight = sum(weight for (_, weight) in selected_items.values())

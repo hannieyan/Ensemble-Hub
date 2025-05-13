@@ -20,8 +20,8 @@ model_specs = [
     # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:0"},
     {"path": "Qwen/Qwen3-4B", "engine": "hf", "device": "cuda:0"},
     # {"path": "Qwen/Qwen2.5-Math-7B-Instruct", "engine": "hf", "device": "cuda:3"},
-    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cuda:4"},
-    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "engine": "hf", "device": "cuda:5"},
+    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cuda:2"},
+    # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "engine": "hf", "device": "cuda:3"},
 ]
 
 reward_spec = [
@@ -83,12 +83,13 @@ def run_batch_inference(
             prediction_text = ""
             selected_models = []
 
-        predictions.append({
+        # ✅ 每个问题后立即保存
+        append_prediction_to_file({
             "prompt": prompt,
             "predict": prediction_text,
             "label": answer.strip(),
-            "selected_models": selected_models  # + 新增：记录推理使用的模型路径
-        })
+            "selected_models": selected_models
+        }, output_path)
 
     save_predictions(predictions, output_path)
     print(f"✅ Saved {len(predictions)} predictions to {output_path}")

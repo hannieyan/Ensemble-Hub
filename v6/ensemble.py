@@ -109,6 +109,16 @@ class EnsembleReasoner:
         segment_counter: Dict[str, int] = {}                  # 统计已选片段出现次数
         max_repeat = 3                                        # 片段允许重复次数阈值
 
+
+        # ─── 打印当前已注册的 scorers ──────────────────────────────
+        try:
+            logger.info("Currently registered scorers:")
+            for key, (scorer, weight) in self.scorers._scorer_cache.items():
+                logger.info(f"  → {key} | type: {type(scorer).__name__} | weight: {weight}")
+        except Exception as e:
+            logger.warning(f"Could not print registered scorers: {e}")
+
+
         for rnd in range(1, self.max_rounds + 1):
             prompt = convo.render()
 
@@ -134,38 +144,42 @@ class EnsembleReasoner:
             # ─── 并行生成 ───────────────────────────────────────────────────────
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=len(available_gens)) as executor:
-                outs = list(executor.map(lambda g: g.generate(dicts), available_gens))
-            # ───────────────────────────────────────────────────────────────────
+                outs = list(
+                    executor.map(
+                        lambda g: g.generate(
+                            dicts,
+                            max_tokens=(16384 if len(available_gens) == 1 else 256),
+                        ),
+                        available_gens
+                    )
+                )
 
+
+            # ─── 过滤无效输出 ───────────────────────────────────────────────────
             filtered = [(g, o) for g, o in zip(available_gens, outs) if is_valid_segment(o.text)]
             if not filtered:
                 logger.info("No valid outputs from generators; skipping this round.")
                 continue
             available_gens, outs = zip(*filtered)
-            segs = [o.text for o in outs]
 
-            # # 更新各模型 EOS 状态
-            # for g, o in zip(available_gens, outs):
-            #     if o.ended_with_eos:
-            #         eos_flags[g.name] = True
-            # if all(eos_flags.values()):
-            #     logger.info("Early stop: all models have emitted EOS at least once")
-            #     break
 
-            # ─── 打印当前已注册的 scorers ──────────────────────────────
-            try:
-                logger.info("Currently registered scorers:")
-                for key, (scorer, weight) in self.scorers._scorer_cache.items():
-                    logger.info(f"  → {key} | type: {type(scorer).__name__} | weight: {weight}")
-            except Exception as e:
-                logger.warning(f"Could not print registered scorers: {e}")
+            # ─── 计算奖励分数（排除自评分）───────────────────────────────────────────
+            scores = []
+            for g, o in zip(available_gens, outs):
+                other_keys = [k for k in self.scorers._scorer_cache if g.name not in k]
+                one_score = self.scorers.score(prompt, [o.text], keys=other_keys)[0]  # 单条
+                scores.append(one_score)
 
-            # 计算奖励分数
-            scores = self.scorers.score(prompt, segs)
+            # ─── 打印当前轮次的生成结果 ───────────────────────────────────────────────
+            for g, o, s in zip(available_gens, outs, scores):
+                other_keys = [k for k in self.scorers._scorer_cache if g.name not in k]
+                log_text = o.text.replace("\n", "\\n").strip()
+                logger.info(
+                    f"[GENERATOR: {g.name}] | [SCORE: {s:.2f}] | [SCORERS: {other_keys}] | TEXT: {log_text}"
+                )
 
-            for g, t, s in zip(available_gens, segs, scores):
-                logger.info(f"→ {g.name} | {s:.2f} | {t.replace(chr(10), '\\n')}")
 
+            # ─── 选择最佳候选 ───────────────────────────────────────────────────────
             best_idx = int(torch.tensor(scores).argmax())
             best_out = outs[best_idx]
             best_score = scores[best_idx]
