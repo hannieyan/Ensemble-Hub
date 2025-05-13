@@ -108,7 +108,7 @@ class HFGenerator(BaseGenerator):
         ]
 
         if "qwen3" in path.lower():
-            data_args = DataArguments(template="qwen3")
+            data_args = DataArguments(template="qwen")
             self.indent = 2
         elif "qwen2.5" in path.lower():
             data_args = DataArguments(template="qwen")
@@ -132,8 +132,13 @@ class HFGenerator(BaseGenerator):
 
         self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
 
+        # self.suppress_tokens = self.tokenizer.encode("</think>", add_special_tokens=False) + \
+        #                        self.tokenizer.encode("<think>", add_special_tokens=False)
+        #
+        # self.begin_suppress_tokens = self.suppress_tokens  # 如果你要一开始也禁止
+
     @torch.inference_mode()
-    def generate(self, dicts, *, max_tokens=128, temperature=0.95, top_p=0.7) -> GenOutput:
+    def generate(self, dicts, *, max_tokens=128, temperature=0.95, top_p=0.7, top_k=50, repetition_penalty=1.0) -> GenOutput:
 
         converted = self.converter(dicts)
         prompt_msgs = converted["_prompt"]
@@ -150,8 +155,12 @@ class HFGenerator(BaseGenerator):
             do_sample=True,
             temperature=temperature,
             top_p=top_p,
+            top_k=top_k,  # 加上这个
+            repetition_penalty=repetition_penalty,  # 加上这个
             max_new_tokens=max_tokens,
             pad_token_id=self.tokenizer.eos_token_id,
+            # suppress_tokens=self.suppress_tokens,
+            # begin_suppress_tokens=self.begin_suppress_tokens,
         )
         out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
         ended = bool(self.tokenizer.eos_token_id in out[len(ids["input_ids"][0]):])
@@ -166,7 +175,7 @@ class HFGenerator(BaseGenerator):
             return None
 
         try:
-            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
             # For completion, typically we don't add special tokens if it's a continuation
             completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
 
@@ -211,7 +220,7 @@ class HFGenerator(BaseGenerator):
             logger.debug(f"Confidence calculation for {self.name}: empty completion text.")
             return None
         try:
-            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
             completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
 
             if completion_token_ids.shape[1] == 0:

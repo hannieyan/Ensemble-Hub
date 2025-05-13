@@ -144,13 +144,21 @@ class EnsembleReasoner:
             available_gens, outs = zip(*filtered)
             segs = [o.text for o in outs]
 
-            # 更新各模型 EOS 状态
-            for g, o in zip(available_gens, outs):
-                if o.ended_with_eos:
-                    eos_flags[g.name] = True
-            if all(eos_flags.values()):
-                logger.info("Early stop: all models have emitted EOS at least once")
-                break
+            # # 更新各模型 EOS 状态
+            # for g, o in zip(available_gens, outs):
+            #     if o.ended_with_eos:
+            #         eos_flags[g.name] = True
+            # if all(eos_flags.values()):
+            #     logger.info("Early stop: all models have emitted EOS at least once")
+            #     break
+
+            # ─── 打印当前已注册的 scorers ──────────────────────────────
+            try:
+                logger.info("Currently registered scorers:")
+                for key, (scorer, weight) in self.scorers._scorer_cache.items():
+                    logger.info(f"  → {key} | type: {type(scorer).__name__} | weight: {weight}")
+            except Exception as e:
+                logger.warning(f"Could not print registered scorers: {e}")
 
             # 计算奖励分数
             scores = self.scorers.score(prompt, segs)
@@ -182,12 +190,16 @@ class EnsembleReasoner:
                 logger.info("Early stop: EOS token emitted by best model")
                 break
 
-        return "\n".join(convo.assistant_parts)
+        return "".join(convo.assistant_parts)
 
 
 def is_valid_segment(text: str, min_len: int = 5) -> bool:
     import string
     import re
+
+    # 清除特殊 token
+    text = text.replace("<｜end▁of▁sentence｜>", "").replace("<|im_end|>", "")
+
     stripped = text.strip()
     if len(stripped) < min_len:
         return False

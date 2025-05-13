@@ -38,6 +38,10 @@ def save_predictions(predictions: list, output_path: str):
         for item in predictions:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
+def append_prediction_to_file(item: dict, output_path: str):
+    with open(output_path, "a", encoding="utf-8") as f:  # ✅ 每个样本后立刻写入
+        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
 def run_batch_inference(
     input_path: str,
     output_path: str,
@@ -50,6 +54,10 @@ def run_batch_inference(
     stat_store = ModelStatStore()
 
     predictions = []
+
+    # ✅ 文件存在则先清空，避免追加旧内容
+    Path(output_path).write_text("", encoding="utf-8")
+
     for example in tqdm(dataset[:max_examples] if max_examples else dataset):
         instruction = example["instruction"].strip()
         question = example["input"].strip()
@@ -66,14 +74,20 @@ def run_batch_inference(
                 reward_spec=reward_spec,
                 stat_store=stat_store
             )
+
+            prediction_text = result["output"].strip()  # + 新增：兼容修改后的返回结构
+            selected_models = result["selected_models"]  # + 新增：记录所选模型
+
         except Exception as e:
             print(f"⚠️ Error on question: {question[:80]}... -> {e}")
-            result = ""
+            prediction_text = ""
+            selected_models = []
 
         predictions.append({
             "prompt": prompt,
-            "predict": result.strip(),
-            "label": answer.strip()
+            "predict": prediction_text,
+            "label": answer.strip(),
+            "selected_models": selected_models  # + 新增：记录推理使用的模型路径
         })
 
     save_predictions(predictions, output_path)

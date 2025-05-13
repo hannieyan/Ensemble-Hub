@@ -90,8 +90,8 @@ def run_zscore_ensemble(
     reward_spec: List[Dict],
     stat_store: ModelStatStore,
     max_rounds: int = 500,
-    score_threshold: float = 0.5
-) -> str:
+    score_threshold: float = -2
+) -> Dict[str, any]:  # ✅【修改1】原来是 `-> str`，改成返回 Dict，包含 output 和 selected_models
 
     logger.info("[Stage 1] Computing or retrieving reference statistics for all models...")
     model_pool = GeneratorPool()
@@ -103,25 +103,29 @@ def run_zscore_ensemble(
             "ppl_mean": 9.795982360839844,
             "ppl_std": 22.284496307373047,
             "conf_mean": 0.6799513101577759,
-            "conf_std": 0.08082679659128189
+            "conf_std": 0.08082679659128189,
+            "weight": 0.2
         },
         "Qwen/Qwen3-4B": {
             "ppl_mean": 6.160105228424072,
             "ppl_std": 6.118084907531738,
             "conf_mean": 0.8231604099273682,
-            "conf_std": 0.07646501809358597
+            "conf_std": 0.07646501809358597,
+            "weight": 1.0
         },
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
             "ppl_mean": 16.57339096069336,
             "ppl_std": 50.37682342529297,
             "conf_mean": 0.6976740956306458,
-            "conf_std": 0.10360505431890488
+            "conf_std": 0.10360505431890488,
+            "weight": 0.5
         },
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
             "ppl_mean": 8.22177505493164,
             "ppl_std": 14.440741539001465,
             "conf_mean": 0.7438507676124573,
-            "conf_std": 0.0863514393568039
+            "conf_std": 0.0863514393568039,
+            "weight": 1.0
         }
     }
     # model_stats = {}
@@ -136,6 +140,11 @@ def run_zscore_ensemble(
     #         f"Conf µ={stats['conf_mean']:.2f}, σ={stats['conf_std']:.2f}"
     #     )
 
+    all_generators = {}
+    for spec in model_specs:
+        generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
+        all_generators[spec["path"]] = generator
+        # scorers.register_scorer(generator, weight=model_stats[spec["path"]]["weight"])
 
     logger.info("[Stage 2] Selecting top models based on z-score (auto model count)...")
     prompt_builder = lambda q: ConversationTemplate(SYSTEM_PROMPT, q).render()
@@ -150,17 +159,15 @@ def run_zscore_ensemble(
     logger.info(f"✅ Selected models: {[s['path'] for s in selected_specs]}")
 
     logger.info("[Stage 3] Loading selected generators and reward model...")
-    generators = [
-        model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
-        for spec in selected_specs
-    ]
+    generators = [all_generators[spec["path"]] for spec in selected_specs]
+
     # scorers =
     # scorer = scorer_pool.get_reward(reward_spec["path"], device=reward_spec["device"])
 
     for spec in reward_spec:
         scorers.get_scorer(spec)
     for generator in generators:
-        scorers.register_scorer(generator, weight=1.0)
+        scorers.register_scorer(generator, weight=model_stats[generator.name]["weight"])
 
     logger.info("[Stage 4] Running ensemble reasoner...")
     reasoner = EnsembleReasoner(
@@ -169,4 +176,11 @@ def run_zscore_ensemble(
         max_rounds=max_rounds,
         score_threshold=score_threshold
     )
-    return reasoner(example)
+
+    output = reasoner(example)
+    selected_paths = [s['path'] for s in selected_specs]
+
+    return {
+        "output": output,  # ✅【新增4】将 reasoner 的输出放在字典中返回
+        "selected_models": selected_paths  # ✅【新增5】同时返回选中模型的名称
+    }  # ✅【修改6】将原 return output 改为返回包含多个信息的字典
