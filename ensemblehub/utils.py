@@ -6,10 +6,10 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 
-from v6.ensemble import EnsembleReasoner, ConversationTemplate
-from v6.generator import GeneratorPool
-from v6.scorer import ScorerPool
-from v6.statistics.compute_model_stats import ModelStatStore
+from ensemblehub.ensemble import EnsembleReasoner, ConversationTemplate
+from ensemblehub.generator import GeneratorPool
+from ensemblehub.scorer import ScorerPool
+from ensemblehub.statistics.compute_model_stats import ModelStatStore
 
 # Optional vLLM backend -----------------------------------------------------
 try:

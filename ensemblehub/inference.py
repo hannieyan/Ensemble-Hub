@@ -5,7 +5,7 @@ from pathlib import Path
 from tqdm import tqdm
 from datasets import load_dataset
 
-from v6.utils import run_zscore_ensemble, ModelStatStore
+from ensemblehub.utils import run_zscore_ensemble, ModelStatStore
 
 # 加载 MATH-500 的问题文本作为参考数据集
 math_dataset = load_dataset(
@@ -90,9 +90,6 @@ def run_batch_inference(
             "label": answer.strip(),
             "selected_models": selected_models
         }, output_path)
-
-    save_predictions(predictions, output_path)
-    print(f"✅ Saved {len(predictions)} predictions to {output_path}")
 
 
 # 启动批量推理

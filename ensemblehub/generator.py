@@ -18,10 +18,10 @@ from transformers import (
 )
 from types import SimpleNamespace
 
-from v6.data.template import get_template_and_fix_tokenizer
-from v6.hparams import DataArguments
-from v6.data.converter import AlpacaDatasetConverter
-from v6.data.parser import DatasetAttr
+from ensemblehub.data.template import get_template_and_fix_tokenizer
+from ensemblehub.hparams import DataArguments
+from ensemblehub.data.converter import AlpacaDatasetConverter
+from ensemblehub.data.parser import DatasetAttr
 
 # Optional vLLM backend -----------------------------------------------------
 try:
@@ -175,9 +175,9 @@ class HFGenerator(BaseGenerator):
             return None
 
         try:
-            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
             # For completion, typically we don't add special tokens if it's a continuation
-            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
+            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
 
             if completion_token_ids.shape[1] == 0:
                 logger.debug(f"PPL calculation for {self.name}: completion tokenized to empty.")
@@ -194,8 +194,8 @@ class HFGenerator(BaseGenerator):
 
             start_index_for_loss = prompt_token_ids.shape[1]
 
-            loss_logits = shift_logits[:, start_index_for_loss:, :]
-            loss_labels = shift_labels[:, start_index_for_loss:]
+            loss_logits = shift_logits[:, start_index_for_loss - 1:, :]
+            loss_labels = shift_labels[:, start_index_for_loss - 1:]
 
             if loss_logits.shape[1] == 0 or loss_labels.shape[1] == 0 or loss_logits.shape[1] != loss_labels.shape[1]:
                 logger.debug(f"PPL calculation for {self.name}: no valid tokens for loss or shape mismatch. Logits shape {loss_logits.shape}, Labels shape {loss_labels.shape}")
@@ -220,8 +220,8 @@ class HFGenerator(BaseGenerator):
             logger.debug(f"Confidence calculation for {self.name}: empty completion text.")
             return None
         try:
-            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
-            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=False).input_ids.to(self.device)
+            prompt_token_ids = self.tokenizer(prompt_context_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
+            completion_token_ids = self.tokenizer(completion_text, return_tensors="pt", add_special_tokens=True).input_ids.to(self.device)
 
             if completion_token_ids.shape[1] == 0:
                 logger.debug(f"Confidence calculation for {self.name}: completion tokenized to empty.")
