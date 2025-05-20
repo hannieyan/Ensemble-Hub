@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from xml.etree.ElementTree import indent
 
 import torch
 
@@ -16,12 +14,11 @@ from transformers import (
     AutoTokenizer,
     GenerationConfig,
 )
-from types import SimpleNamespace
 
-from ensemblehub.data.template import get_template_and_fix_tokenizer
-from ensemblehub.hparams import DataArguments
-from ensemblehub.data.converter import AlpacaDatasetConverter
-from ensemblehub.data.parser import DatasetAttr
+from llamafactory.data.template import get_template_and_fix_tokenizer
+from llamafactory.hparams import DataArguments
+from llamafactory.data.converter import AlpacaDatasetConverter
+from llamafactory.data.parser import DatasetAttr
 
 # Optional vLLM backend -----------------------------------------------------
 try:

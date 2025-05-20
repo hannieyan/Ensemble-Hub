@@ -11,7 +11,7 @@ from transformers import (
     GenerationConfig,
 )
 
-from ensemblehub.generator import BaseGenerator
+from ensemblehub.generator import BaseGenerator, HFGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -118,13 +118,18 @@ class PRMScorer(BaseScorer):
 # ---------------------------------------------------------------------------
 
 class GeneratorScorer(BaseScorer):
-    def __init__(self, generator_instance: 'BaseGenerator', name: Optional[str] = None):
+    def __init__(
+        self,
+        generator_instance: 'BaseGenerator',
+        name: Optional[str] = None
+    ):
         if not hasattr(generator_instance, 'calculate_ppl') or \
                 not hasattr(generator_instance, 'calculate_confidence'):
             raise ValueError("Provided generator_instance must have calculate_ppl and calculate_confidence methods.")
 
         self.generator = generator_instance
         self.name = name if name else f"generator_scorer_{generator_instance.name}"
+
         logger.info(f"GeneratorScorer initialized with generator: {self.generator.name} as Scorer: {self.name}")
 
     def score(self, prompt: str, completions: List[str]) -> List[float]:
@@ -170,15 +175,8 @@ class GeneratorScorer(BaseScorer):
                 current_score_sum += conf_score_component
                 valid_components += 1
 
-            if valid_components > 0:
-                final_score = current_score_sum / valid_components
-            else:
-                logger.warning(f"Could not calculate a valid PPL or Confidence for completion by {self.name}: '{completion_text[:30]}...'. Assigning very low score.")
-                final_score = -float('inf')  # Or 0.0 or some other penalty
-
+            final_score = current_score_sum / valid_components
             scores.append(final_score)
-            logger.debug(
-                f"Scorer {self.name} - Completion: '{completion_text[:30]}...' | PPL: {ppl_val:.2f}, Conf: {conf_val:.2f} | PPLComp: {ppl_score_component:.2f}, ConfComp: {conf_score_component:.2f} | Final Score: {final_score:.3f}")
 
         return scores
 
@@ -203,14 +201,18 @@ class ScorerPool:
 
         engine = spec["engine"]
         weight = spec.get("weight", 1.0)
-        if engine == "hf":
+        if engine == "hf_rm":
             scorer = PRMScorer(model_path=spec["path"], device=spec.get("device", "cuda"))
+            cls._scorer_cache[key] = (scorer, weight)
         elif engine == "api":
             scorer = APIScorer(endpoint=spec["path"])
+            cls._scorer_cache[key] = (scorer, weight)
+        elif engine == "hf_gen":
+            generator = HFGenerator(spec["path"], device=spec.get("device", "cuda"))
+            scorer = cls.register_scorer(generator, weight=spec.get("weight", 1.0))
         else:
             raise ValueError(f"Unknown scorer engine: {engine}")
 
-        cls._scorer_cache[key] = (scorer, weight)
         print(f"[ScorerPool] Added scorer: {key}")
         return scorer
 
@@ -251,20 +253,19 @@ class ScorerPool:
     @classmethod
     def register_scorer(cls, generator_instance: 'BaseGenerator', weight: float, scorer_name: Optional[str] = None):
         if not scorer_name:
-            scorer_name = f"gen_scorer_{generator_instance.name}"
+            scorer_name = generator_instance.name
 
         if not (hasattr(generator_instance, 'calculate_ppl') and callable(generator_instance.calculate_ppl) and
                 hasattr(generator_instance, 'calculate_confidence') and callable(generator_instance.calculate_confidence)):
             logger.error(f"Gen '{generator_instance.name}' lacks methods for GeneratorScorer. Not registered.")
             return
 
-        engine_type = "generator"
+        engine_type = "hf_gen"
         key = f"{engine_type}::{scorer_name}"
         if key in cls._scorer_cache: logger.warning(f"Scorer key '{key}' exists. Overwriting.")
 
-        try:
-            new_gen_scorer = GeneratorScorer(generator_instance, name=scorer_name)
-            cls._scorer_cache[key] = (new_gen_scorer, float(weight))
-            logger.info(f"[ScorerPool] Registered GeneratorScorer: '{key}' w={weight} from gen '{generator_instance.name}'.")
-        except Exception as e:
-            logger.error(f"Failed to register GeneratorScorer for {generator_instance.name}: {e}", exc_info=True)
+        scorer = GeneratorScorer(generator_instance, name=scorer_name)
+        cls._scorer_cache[key] = (scorer, float(weight))
+        logger.info(f"[ScorerPool] Registered GeneratorScorer: '{key}' w={weight} from gen '{generator_instance.name}'.")
+
+        return scorer

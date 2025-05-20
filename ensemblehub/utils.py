@@ -11,6 +11,12 @@ from ensemblehub.generator import GeneratorPool
 from ensemblehub.scorer import ScorerPool
 from ensemblehub.statistics.compute_model_stats import ModelStatStore
 
+from ensemblehub.ensemble_methods.simple import simple_ensemble
+
+ensemble_map = {
+    "simple": simple_ensemble,
+}
+
 # Optional vLLM backend -----------------------------------------------------
 try:
     from vllm import LLM, SamplingParams  # type: ignore
@@ -104,28 +110,48 @@ def run_zscore_ensemble(
             "ppl_std": 22.284496307373047,
             "conf_mean": 0.6799513101577759,
             "conf_std": 0.08082679659128189,
-            "weight": 0.2
+            "weight": 0.2,
+            "size": 1.5
         },
         "Qwen/Qwen3-4B": {
             "ppl_mean": 6.160105228424072,
             "ppl_std": 6.118084907531738,
             "conf_mean": 0.8231604099273682,
             "conf_std": 0.07646501809358597,
-            "weight": 1.0
+            "weight": 1.0,
+            "size": 4.0
         },
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
             "ppl_mean": 16.57339096069336,
             "ppl_std": 50.37682342529297,
             "conf_mean": 0.6976740956306458,
             "conf_std": 0.10360505431890488,
-            "weight": 0.5
+            "weight": 0.5,
+            "size": 7.0
         },
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
             "ppl_mean": 8.22177505493164,
             "ppl_std": 14.440741539001465,
             "conf_mean": 0.7438507676124573,
             "conf_std": 0.0863514393568039,
-            "weight": 1.0
+            "weight": 1.0,
+            "size": 14.0
+        },
+        "Qwen/Qwen2.5-Math-7B-Instruct": {
+            'ppl_mean': 4.232998847961426,
+            'ppl_std': 3.664811611175537,
+            'conf_mean': 0.7785097360610962,
+            'conf_std': 0.09053431451320648,
+            "weight": 1.0,
+            "size": 7.0
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {
+            "ppl_mean": 4.0472869873046875,
+            "ppl_std": 3.9851391315460205,
+            "conf_mean": 0.7702987194061279,
+            "conf_std": 0.0831739529967308,
+            "weight": 1.0,
+            "size": 32.0
         }
     }
     # model_stats = {}
@@ -170,16 +196,16 @@ def run_zscore_ensemble(
         scorers.register_scorer(generator, weight=model_stats[generator.name]["weight"])
 
     logger.info("[Stage 4] Running ensemble reasoner...")
-    reasoner = EnsembleReasoner(
+
+    output = ensemble_map["simple"](
         generators=generators,
         scorers=scorers,
+        example=example,
         max_rounds=max_rounds,
-        score_threshold=score_threshold
+        score_threshold=score_threshold,
     )
 
-    output = reasoner(example)
     selected_paths = [s['path'] for s in selected_specs]
-
     return {
         "output": output,  # ✅【新增4】将 reasoner 的输出放在字典中返回
         "selected_models": selected_paths  # ✅【新增5】同时返回选中模型的名称

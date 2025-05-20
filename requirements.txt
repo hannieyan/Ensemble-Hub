@@ -4,4 +4,5 @@ datasets
 loguru
 peft
 omegaconf
-vllm
+ace_tools
+# vllm

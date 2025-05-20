@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List
 import torch
+from concurrent.futures import ThreadPoolExecutor
 
 from ensemblehub.generator import BaseGenerator
 
@@ -108,9 +109,9 @@ class EnsembleReasoner:
 
         convo = ConversationTemplate(SYSTEM_PROMPT, example["input"])
 
-        segment_counter: Dict[str, int] = {}                  # 统计已选片段出现次数
-        max_repeat = 5                                        # 片段允许重复次数阈值
-
+        last_output = None
+        repeat_count = 0
+        max_repeat = 3  # 连续重复 3 次就停止，你可以调
 
         # ─── 打印当前已注册的 scorers ──────────────────────────────
         try:
@@ -123,6 +124,14 @@ class EnsembleReasoner:
 
         for rnd in range(1, self.max_rounds + 1):
             prompt = convo.render()
+
+            # ─── 提前终止：总长度超过32768 ───────────────────────────────────────
+            tok = getattr(available_gens[0], "tokenizer", None)
+            if tok is not None:
+                total_length = tok(convo.render(), return_tensors="pt").input_ids.size(1)
+                if total_length > 32768:
+                    logger.warning(f"Early stop: total prompt length {total_length} > 32768")
+                    break
 
             # ─── 过滤长度超限的 generator ───────────────────────────────────────
             for g in available_gens:
@@ -138,18 +147,16 @@ class EnsembleReasoner:
             if not available_gens:
                 logger.error("No generators available for current prompt length; stopping early.")
                 break
-            # ───────────────────────────────────────────────────────────────────
 
             dicts = convo.render_dict()
 
             # ─── 并行生成 ───────────────────────────────────────────────────────
-            from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=len(available_gens)) as executor:
                 outs = list(
                     executor.map(
                         lambda g: g.generate(
                             dicts,
-                            max_tokens=(16384 if len(available_gens) == 1 else 32),
+                            max_tokens=(16384 if len(available_gens) == 1 else 256),
                         ),
                         available_gens
                     )
@@ -164,13 +171,26 @@ class EnsembleReasoner:
                 scores = [0.0 for _ in outs]
             else:
             # 2. 计算每个模型的分数
-                scores = []
-                for g, o in zip(available_gens, outs):
-                    other_keys = [k for k in self.scorers._scorer_cache if g.name not in k]
-                    one_score = self.scorers.score(prompt, [o.text], keys=other_keys)[0]
-                    scores.append(one_score)
-                    model_reward_sum[g.name] += one_score
+                # 准备打分函数（每个模型）
+                def score_one(g_o_pair):
+                    g, o = g_o_pair
+                    try:
+                        other_keys = [k for k in self.scorers._scorer_cache if g.name not in k]
+                        score = self.scorers.score(prompt, [o.text], keys=other_keys)[0]
+                        return g.name, score
+                    except Exception as e:
+                        logger.exception(f"[Score Error] {g.name} failed to score output: {o.text[:80]!r}")
+                        return g.name, 0.0  # 出错 fallback
 
+                # 使用线程池并行计算
+                with ThreadPoolExecutor(max_workers=len(available_gens)) as executor:
+                    results = list(executor.map(score_one, zip(available_gens, outs)))
+
+                # 整理结果
+                scores = []
+                for g_name, score in results:
+                    scores.append(score)
+                    model_reward_sum[g_name] += score
 
             # ─── 打印当前轮次的生成结果 ───────────────────────────────────────────────
             for g, o, s in zip(available_gens, outs, scores):
@@ -192,12 +212,15 @@ class EnsembleReasoner:
 
 
             # ─── 重复文本检测 ─────────────────────────────────────────────────
-            segment_counter[best_out.text] = segment_counter.get(best_out.text, 0) + 1
-            if segment_counter[best_out.text] >= max_repeat:
-                logger.info("Early stop: segment repeated %d times → \"%s\"",
-                            segment_counter[best_out.text], best_out.text)
-                break
-            # ──────────────────────────────────────────────────────────────────
+            if best_out.text == last_output:
+                repeat_count += 1
+                if repeat_count >= max_repeat:
+                    logger.info("Early stop: same output repeated %d times consecutively → \"%s\"",
+                                repeat_count, best_out.text.strip())
+                    break
+            else:
+                repeat_count = 1  # 当前这个算第一次
+                last_output = best_out.text
 
 
             convo.add_assistant(best_out.text)

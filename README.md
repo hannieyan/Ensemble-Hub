@@ -33,43 +33,35 @@ ensemble-inference/
 └── README.md                    # You're here!
 ```
 
-## 🔧 Environment
+##  Getting Started
 
-| **Package**       | **Version tested** | **Notes**                    |
-| ----------------- | ------------------ | ---------------------------- |
-| Python            | ≥ 3.9              |                              |
-| PyTorch           | ≥ 2.2              | + CUDA 11/12 GPU recommended |
-| transformers      | ≥ 4.40             | HF backend                   |
-| fastapi & uvicorn | ≥ 0.110            | API server                   |
-| pyyaml            | any                | load config.yaml             |
-| **Optional**      |                    |                              |
-| vllm              | ≥ 0.4              | ultra-fast inference backend |
+### 🔧 Installation
 
 ```bash
-# CUDA-enabled install (edit as needed)
+conda create -n ensemble python=3.12
+
+git clone --depth 1 https://github.com/hiyouga/LLaMA-Factory.git
+cd LLaMA-Factory
+pip install -e ".[torch,metrics]" --no-build-isolation
+cd ..
+
+git clone https://github.com/Fzkuji/Ensemble-Hub.git
+cd Ensemble-Hub
+
 pip install -r requirements.txt
-# add vLLM if you want that backend
-pip install vllm
 ```
 
-## ▶️ Quick start (Python / notebook)
 
-```python
-from ensemble_inference import run_ensemble
+### 💻 Quickstart
 
-model_specs = [
-    {"path": "/models/DeepSeek-R1-Distill-Qwen-1.5B",  "engine": "hf"},
-    {"path": "/models/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf"},
-    {"path": "/models/DeepSeek-R1-Distill-Qwen-14B",  "engine": "vllm"},
-]
+> [!NOTE]
+> Please update ensemblehub/inference.py to custom your LLM ensemble.
 
-answer = run_ensemble(
-    "Explain gradient accumulation in simple terms.",
-    model_specs=model_specs,
-    max_rounds=5,
-    accumulate_context=True      # let the conversation build up
-)
-print(answer)
+```shell
+python -m ensemblehub.inference
+    --input_path data/AIME2024/aime/aime24.json \
+    --output_path saves/aime24.jsonl \
+    --max_examples 500
 ```
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
@@ -127,7 +119,21 @@ print(answer)
 
 ## 📌 To-Do
 
-*
+-[x] Multi-model inference
+    
+-[x] Reward model selection
+    
+-[x] HuggingFace backends
+
+-[ ] vLLM backends
+    
+-[ ] API support for closed-source models
+    
+-[ ] Streaming API interface (FastAPI)
+    
+-[ ] Improved scorer aggregation
+    
+-[ ] Config-driven pipelines
 
 ## 📜 License
 
@@ -135,4 +141,4 @@ Apache-2.0. See the [LICENSE](./LICENSE) file for details.
 
 ## 🙏 Acknowledgements
 
-Relies on **DeepSeek**, **Qwen** model weights, Hugging Face Transformers, and the incredible open-source community.
+Relies on **DeepSeek**, **Qwen** model weights, Hugging Face Transformers, [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory), and the incredible open-source community.
