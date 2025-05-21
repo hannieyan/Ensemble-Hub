@@ -168,7 +168,7 @@ class HFGenerator(BaseGenerator):
             max_new_tokens=max_tokens,
             pad_token_id=self.tokenizer.eos_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-            stop_strings=stop_strings or self.stop_strings,
+            stop_strings=["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
             # suppress_tokens=self.suppress_tokens,
             # begin_suppress_tokens=self.begin_suppress_tokens,
         )
