@@ -1,10 +1,8 @@
 # Ensemble-Hub
 
-**Ensemble-Hub** is an open-source toolkit to **boost your LLM answers** by letting multiple language models work together. Instead of betting everything on one model, Ensemble-Hub has a whole team of models brainstorm and compete – then picks the best parts from each. The result? Answers that are often more accurate, detailed, and reliable. 🎉
-
-How does it work? Under the hood, you provide any number of generator models (we've tested with HuggingFace Transformers and the ultra-fast vLLM) plus a reward model as the judge. Each round, every generator writes a short answer segment; the reward model (e.g. a Qwen-7B fine-tuned preference model) scores them; and the best segment is kept. This repeats until the answer is complete (or an end-of-sequence token is reached).
-
-Ensemble-Hub is **easy to use** in both research and production settings. You can call the high-level `run_ensemble()` function in a Python script or notebook for quick experiments. When it's time to go live, switch to the provided FastAPI server (`ensemble_api_server.py`) for a **plug-and-play REST API**. All models are loaded once and cached (thanks to a singleton ModelPool), so you get speed and memory efficiency out of the box.
+**Ensemble-Hub** is an open-source toolkit for large language model (LLM) ensemble inference. 
+It is designed to support and unify multiple ensemble strategies for LLMs, including existing methods such as [LLM-Blender](https://github.com/yuchenlin/LLM-Blender), [GaC](https://github.com/yaoching0/GaC), and [UniTE](https://github.com/starrYYxuan/UniTE). 
+The project is under active development.
 
 ## 🌟 Project goals
 
@@ -58,7 +56,7 @@ pip install -r requirements.txt
 > Please update ensemblehub/inference.py to custom your LLM ensemble.
 
 ```shell
-python -m ensemblehub.inference
+python -m ensemblehub.inference \
     --input_path data/AIME2024/aime/aime24.json \
     --output_path saves/aime24.jsonl \
     --max_examples 500
@@ -66,7 +64,7 @@ python -m ensemblehub.inference
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
 
-## 🛰 Start the REST API
+### 🛰 Start the REST API
 
 1. **Create a YAML config** (see `configs/example.yaml` for a template)
 
@@ -82,25 +80,46 @@ python -m ensemblehub.inference
 2. **Launch the server**
 
    ```bash
-   python ensemble_api_server.py \
-       --config configs/example.yaml \
-       --host 0.0.0.0 --port 8000
+   uvicorn ensemblehub.api:app --host 0.0.0.0 --port 9876
    ```
 
 3. **Ping the server**
 
    ```bash
-   curl http://localhost:8000/status
+   curl http://localhost:9876/status
    # ➜ {"status":"ready"}
    ```
 
 4. **Ask a question**
 
    ```bash
-   curl -X POST http://localhost:8000/api/generate \
-        -H "Content-Type: application/json" \
-        -d '{"question":"What is RLHF?", "max_rounds":4}'
+   curl -X POST http://localhost:9876/v1/chat/completions \
+       -H "Content-Type: application/json" \
+       -d '{
+           "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+           "prompt": "What is the capital of France?",
+           "max_tokens": 50
+       }'
    ```
+
+5. **Benchmark the server with lm-evaluation-harness**
+
+   Install lm-evaluation-harness:
+   ```shell
+   git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
+   cd lm-evaluation-harness
+   pip install -e .
+   ```
+   
+   Run evaluation on CoQA:
+   ```bash
+   lm_eval \
+     --model openai-completions \
+     --tasks gsm8k \
+     --model_args model=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B,base_url=http://localhost:9876,v1=True,tokenizer_backend=None \
+     --batch_size 1
+   ```
+
 
 ## 💡 Core features
 
@@ -119,21 +138,14 @@ python -m ensemblehub.inference
 
 ## 📌 To-Do
 
--[x] Multi-model inference
-    
--[x] Reward model selection
-    
--[x] HuggingFace backends
-
--[ ] vLLM backends
-    
--[ ] API support for closed-source models
-    
--[ ] Streaming API interface (FastAPI)
-    
--[ ] Improved scorer aggregation
-    
--[ ] Config-driven pipelines
+- [x] Multi-model inference
+- [x] Reward model selection
+- [x] HuggingFace backend
+- [ ] vLLM backends
+- [ ] API support for closed-source models
+- [ ] Streaming API interface (FastAPI)
+- [ ] Improved scorer aggregation
+- [ ] Config-driven pipelines
 
 ## 📜 License
 

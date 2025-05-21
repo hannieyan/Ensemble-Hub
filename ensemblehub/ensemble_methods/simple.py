@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 class ConversationTemplate:
     """
     A conversation template for constructing dialogue prompts.
-    It includes a system prompt, a single user question, and accumulated assistant responses.
+    It includes an optional system prompt, a single user question, and accumulated assistant responses.
     """
 
-    def __init__(self, system_prompt: str, initial_question: str):
+    def __init__(self, initial_question: str, system_prompt: Optional[str] = None):
         self.system = system_prompt
         self.question = initial_question
         self.assistant_parts: List[str] = []  # Collected assistant responses
@@ -32,39 +32,38 @@ class ConversationTemplate:
 
     def render(self) -> str:
         """
-        Render the full prompt to be fed into a language model.
-        It includes the system message, user input, and accumulated assistant responses.
+        Render the full prompt as a raw string. Includes system prompt if provided.
         """
-        lines = [
-            f"[SYSTEM] {self.system} [/SYSTEM]",
-            f"<user>\n{self.question.strip()}\n</user>",
-            f"<assistant>\n" + "\n".join(self.assistant_parts)
-        ]
+        lines = []
+        if self.system:
+            lines.append(f"[SYSTEM] {self.system} [/SYSTEM]")
+        lines.append(f"<user>\n{self.question.strip()}\n</user>")
+        if self.assistant_parts:
+            lines.append(f"<assistant>\n{''.join(self.assistant_parts)}")
         return "".join(lines)
 
     def render_dict(self) -> Dict[str, str]:
         """
-        Render the full prompt to be fed into a language model.
-        It includes the system message, user input, and accumulated assistant responses.
+        Render the prompt as a dictionary. Omits 'instruction' if system prompt is None.
         """
-        dicts = {
-            "instruction": self.system,
+        output_dict = {
             "input": self.question.strip(),
             "output": "".join(self.assistant_parts)
         }
-        return dicts
+        if self.system:
+            output_dict["instruction"] = self.system
+        return output_dict
 
-    def render_list(self) -> list[dict[str, str]]:
+    def render_list(self) -> List[Dict[str, str]]:
         """
-        Render the full prompt to be fed into a language model.
-        It includes the system message, user input, and accumulated assistant responses.
+        Render the prompt as a list of role-based messages.
         """
-        messages = [
-            {"role": "system", "content": self.system},
-            {"role": "user", "content": self.question.strip()},
-            {"role": "assistant", "content": "".join(self.assistant_parts)},
-        ]
-
+        messages = []
+        if self.system:
+            messages.append({"role": "system", "content": self.system})
+        messages.append({"role": "user", "content": self.question.strip()})
+        if self.assistant_parts:
+            messages.append({"role": "assistant", "content": "".join(self.assistant_parts)})
         return messages
 
 

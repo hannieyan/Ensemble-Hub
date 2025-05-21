@@ -1,7 +1,0 @@
-# config.yaml
-models:
-  - path: /root/autodl-tmp/DeepSeek-R1-Distill-Qwen-1.5B
-    engine: hf
-  - path: /root/autodl-tmp/DeepSeek-R1-Distill-Qwen-7B
-    engine: hf
-reward_path: /root/autodl-tmp/Qwen2.5-Math-PRM-7B

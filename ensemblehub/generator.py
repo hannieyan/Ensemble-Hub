@@ -135,13 +135,23 @@ class HFGenerator(BaseGenerator):
         # self.begin_suppress_tokens = self.suppress_tokens  # 如果你要一开始也禁止
 
     @torch.inference_mode()
-    def generate(self, dicts, *, max_tokens=256, temperature=0.95, top_p=0.7, top_k=50, repetition_penalty=1.0) -> GenOutput:
+    def generate(
+        self,
+        dicts,
+        *,
+        enable_thinking: bool = False,
+        max_tokens=256,
+        temperature=0.95,
+        top_p=0.7,
+        top_k=50,
+        repetition_penalty=1.0
+    ) -> GenOutput:
 
         converted = self.converter(dicts)
         prompt_msgs = converted["_prompt"]
         response_msgs = converted["_response"]
         messages = prompt_msgs + response_msgs
-        prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages)
+        prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages, enable_thinking=enable_thinking)
 
         ids = prompt_ids + response_ids[:-self.indent]
 
