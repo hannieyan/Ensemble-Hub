@@ -64,7 +64,7 @@ python -m ensemblehub.inference \
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
 
-### 🛰 Start the REST API
+### 🚀 Start the REST API
 
 1. **Create a YAML config** (see `configs/example.yaml` for a template)
 

@@ -12,9 +12,13 @@ from ensemblehub.scorer import ScorerPool
 from ensemblehub.statistics.compute_model_stats import ModelStatStore
 
 from ensemblehub.ensemble_methods.simple import simple_ensemble
+from ensemblehub.ensemble_methods.random import random_ensemble
+from ensemblehub.ensemble_methods.loop import loop_ensemble
 
 ensemble_map = {
     "simple": simple_ensemble,
+    "random": random_ensemble,
+    "loop": loop_ensemble,
 }
 
 # Optional vLLM backend -----------------------------------------------------

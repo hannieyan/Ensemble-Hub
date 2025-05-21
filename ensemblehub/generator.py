@@ -71,7 +71,7 @@ class GenOutput:
 class BaseGenerator:
     name: str
 
-    def generate(self, prompt: str, **kw) -> GenOutput:
+    def generate(self, prompt, **kw) -> GenOutput:
         """Abstract method for generating model outputs."""
         raise NotImplementedError
 
