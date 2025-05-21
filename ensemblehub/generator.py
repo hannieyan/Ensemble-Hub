@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -144,7 +144,8 @@ class HFGenerator(BaseGenerator):
         temperature=0.95,
         top_p=0.7,
         top_k=50,
-        repetition_penalty=1.0
+        repetition_penalty=1.0,
+        stop_strings: Optional[Union[str, List[str]]] = None,
     ) -> GenOutput:
 
         converted = self.converter(dicts)
@@ -166,14 +167,30 @@ class HFGenerator(BaseGenerator):
             repetition_penalty=repetition_penalty,  # 加上这个
             max_new_tokens=max_tokens,
             pad_token_id=self.tokenizer.eos_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            stop_strings=stop_strings or self.stop_strings,
             # suppress_tokens=self.suppress_tokens,
             # begin_suppress_tokens=self.begin_suppress_tokens,
         )
         out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
-        ended = bool(self.tokenizer.eos_token_id in out[len(ids["input_ids"][0]):])
-        txt = self.tokenizer.decode(out[len(ids["input_ids"][0]):], skip_special_tokens=False)
+
+        # ─── Check if the output contains the EOS token and stop_strings ────────────
+        generated_ids = out[len(ids["input_ids"][0]):]
+        ended = self.tokenizer.eos_token_id in generated_ids.tolist()
+
+        txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
+
+        if stop_strings:
+            if isinstance(stop_strings, str):
+                stop_strings = [stop_strings]
+            for s in stop_strings:
+                if s in txt:
+                    txt = txt.split(s)[0]
+                    ended = True
+                    break
 
         return GenOutput(_trim_text(txt) if not ended else txt, ended)
+
 
     @torch.inference_mode()
     def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
@@ -193,7 +210,10 @@ class HFGenerator(BaseGenerator):
             full_sequence_ids = torch.cat((prompt_token_ids, completion_token_ids), dim=1)
             attention_mask = torch.ones_like(full_sequence_ids)
 
-            outputs = self.model(input_ids=full_sequence_ids, attention_mask=attention_mask)
+            outputs = self.model(
+                input_ids=full_sequence_ids,
+                attention_mask=attention_mask,
+            )
             all_logits = outputs.logits
 
             shift_logits = all_logits[..., :-1, :].contiguous()
