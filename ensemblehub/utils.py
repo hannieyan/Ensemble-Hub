@@ -99,6 +99,7 @@ def run_zscore_ensemble(
     model_specs: List[Dict],
     reward_spec: List[Dict],
     stat_store: ModelStatStore,
+    ensemble_method: str = "simple",
     max_rounds: int = 500,
     score_threshold: float = -2
 ) -> Dict[str, any]:  # ✅【修改1】原来是 `-> str`，改成返回 Dict，包含 output 和 selected_models
@@ -176,16 +177,20 @@ def run_zscore_ensemble(
         all_generators[spec["path"]] = generator
         # scorers.register_scorer(generator, weight=model_stats[spec["path"]]["weight"])
 
-    logger.info("[Stage 2] Selecting top models based on z-score (auto model count)...")
-    prompt_builder = lambda q: ConversationTemplate(SYSTEM_PROMPT, q).render()
-    selected_specs = select_top_models_by_z_score(
-        question=example["input"],
-        model_specs=model_specs,
-        prompt_builder=prompt_builder,
-        model_stats=model_stats,
-        model_pool=model_pool,
-        model_count=-1
-    )
+    if ensemble_method == "simple":
+        logger.info("[Stage 2] Selecting top models based on z-score (auto model count)...")
+        prompt_builder = lambda q: ConversationTemplate(SYSTEM_PROMPT, q).render()
+        selected_specs = select_top_models_by_z_score(
+            question=example["input"],
+            model_specs=model_specs,
+            prompt_builder=prompt_builder,
+            model_stats=model_stats,
+            model_pool=model_pool,
+            model_count=-1
+        )
+    else:
+        # chosse all models
+        selected_specs = model_specs
     logger.info(f"✅ Selected models: {[s['path'] for s in selected_specs]}")
 
     logger.info("[Stage 3] Loading selected generators and reward model...")
@@ -201,7 +206,7 @@ def run_zscore_ensemble(
 
     logger.info("[Stage 4] Running ensemble reasoner...")
 
-    output = ensemble_map["simple"](
+    output = ensemble_map[ensemble_method](
         generators=generators,
         scorers=scorers,
         example=example,

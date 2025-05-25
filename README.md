@@ -1,3 +1,5 @@
+![# LLaMA Factory](assets/Ensemble-Hub.gif)
+
 # Ensemble-Hub
 
 **Ensemble-Hub** is an open-source toolkit for large language model (LLM) ensemble inference. 
@@ -11,6 +13,23 @@ The project is under active development.
 | **Boost answer quality** by letting several LLMs compete. | Each round, every generator writes a short segment → a reward model (Qwen 2.5-Math-PRM-7B) scores them → best segment is kept. |
 | **Stay fast & memory-friendly** with model caching.       | ModelPool loads each generator/reward model once, then re-uses it for every call (CLI, notebook or API).                       |
 | **Provide plug-and-play usage** for research & services.  | Python helper `run_ensemble()` **or** a production-grade FastAPI server (`ensemble_api_server.py`).                            |
+
+
+## 💡 Core features
+
+* **Unlimited generators** – mix and match multiple models (HF *and* vLLM backends supported).
+* **Reward-guided selection** – uses a reward model (e.g. Qwen2.5-Math-PRM-7B) to score candidates and pick the best output each round.
+* **EOS-based early stop** – if a model outputs its end-of-sequence token, the loop exits early.
+* **Context accumulation** – optionally carry forward previously chosen segments into the next round (builds a running conversation context).
+* **Clean prompt template** – minimal prompt format with no extraneous instructions (no stray “600 words” artifacts).
+* **Singleton caches** – models load once and are reused on repeated calls (even across API requests).
+
+
+## Ensemble Methods
+
+
+
+
 
 ## 🗂 Repository layout
 
@@ -93,6 +112,7 @@ python -m ensemblehub.inference \
 4. **Ask a question**
 
    ```bash
+   export OPENAI_API_KEY=sk-xxxxx  # 先设置一次就行
    curl -X POST http://localhost:9876/v1/chat/completions \
        -H "Content-Type: application/json" \
        -d '{
@@ -119,16 +139,15 @@ python -m ensemblehub.inference \
      --model_args model=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B,base_url=http://localhost:9876,v1=True,tokenizer_backend=None \
      --batch_size 1
    ```
+   
+   Run evaluation with single model:
+   ```bash
+   accelerate launch -m lm_eval --model hf \
+       --model_args pretrained=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B \
+       --tasks gsm8k,mmlu_generative,arc_challenge_chat,triviaqa,nq_open,bbh \
+       --batch_size 8
+   ```
 
-
-## 💡 Core features
-
-* **Unlimited generators** – mix and match multiple models (HF *and* vLLM backends supported).
-* **Reward-guided selection** – uses a reward model (e.g. Qwen2.5-Math-PRM-7B) to score candidates and pick the best output each round.
-* **EOS-based early stop** – if a model outputs its end-of-sequence token, the loop exits early.
-* **Context accumulation** – optionally carry forward previously chosen segments into the next round (builds a running conversation context).
-* **Clean prompt template** – minimal prompt format with no extraneous instructions (no stray “600 words” artifacts).
-* **Singleton caches** – models load once and are reused on repeated calls (even across API requests).
 
 ## ✍️ Extending
 
