@@ -6,19 +6,38 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 
-from ensemblehub.ensemble import EnsembleReasoner, ConversationTemplate
+from ensemblehub.conversation import ConversationTemplate
 from ensemblehub.generator import GeneratorPool
 from ensemblehub.scorer import ScorerPool
 from ensemblehub.statistics.compute_model_stats import ModelStatStore
 
-from ensemblehub.ensemble_methods.simple import simple_ensemble
-from ensemblehub.ensemble_methods.random import random_ensemble
-from ensemblehub.ensemble_methods.loop import loop_ensemble
+# New architecture imports
+from ensemblehub.ensemble_methods import (
+    EnsembleFramework,
+    EnsembleConfig,
+    run_simple_ensemble,
+    ZScoreSelector, 
+    AllModelsSelector, 
+    RandomSelector,
+    RewardBasedSelector,
+    RandomSentenceSelector,
+    RoundRobinSelector
+)
 
+# Legacy support - map ensemble methods to new classes
 ensemble_map = {
-    "simple": simple_ensemble,
-    "random": random_ensemble,
-    "loop": loop_ensemble,
+    "simple": RewardBasedSelector,
+    "random": RandomSentenceSelector, 
+    "loop": RoundRobinSelector,
+    "reward_based": RewardBasedSelector,
+    "round_robin": RoundRobinSelector,
+}
+
+# Model selection methods
+model_selection_map = {
+    "zscore": ZScoreSelector,
+    "all": AllModelsSelector,
+    "random": RandomSelector,
 }
 
 # Optional vLLM backend -----------------------------------------------------
@@ -93,6 +112,90 @@ def select_top_models_by_z_score(question: str, model_specs: List[Dict], prompt_
     results = sorted(results, key=lambda x: x[0], reverse=True)
     return [spec for _, spec in results[:model_count]]
 
+def run_ensemble(
+    example: Dict,
+    model_specs: List[Dict],
+    reward_spec: List[Dict],
+    ensemble_method: str = "reward_based",
+    model_selection_method: str = "zscore", 
+    max_rounds: int = 500,
+    score_threshold: float = -2.0,
+    **kwargs
+) -> Dict[str, any]:
+    """
+    New unified ensemble function using the refactored architecture.
+    Now uses the EnsembleFramework for better organization.
+    
+    Args:
+        example: Input example with "instruction", "input", "output"
+        model_specs: List of model specifications
+        reward_spec: List of reward model specifications  
+        ensemble_method: Output aggregation method ("reward_based", "random", "round_robin")
+        model_selection_method: Model selection method ("zscore", "all", "random")
+        max_rounds: Maximum generation rounds
+        score_threshold: Score threshold for early stopping
+    
+    Returns:
+        Dict with "output" and "selected_models"
+    """
+    logger.info("[New Framework] Initializing unified ensemble framework...")
+    
+    # Initialize pools
+    model_pool = GeneratorPool()
+    scorers = ScorerPool()
+    
+    # Load model statistics
+    model_stats = get_default_model_stats()
+    
+    # Load external scorers
+    for spec in reward_spec:
+        try:
+            scorers.get_scorer(spec)
+            logger.info(f"✅ Loaded scorer: {spec.get('path', 'unknown')}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load scorer {spec.get('path', 'unknown')}: {e}")
+    
+    # Map legacy method names to new names
+    method_mapping = {
+        "simple": "reward_based",
+        "random": "random", 
+        "loop": "round_robin"
+    }
+    aggregation_method = method_mapping.get(ensemble_method, ensemble_method)
+    
+    # Create ensemble framework
+    config = EnsembleConfig(
+        use_model_selection=True,
+        model_selection_method=model_selection_method,
+        model_selection_params={"model_count": -1} if model_selection_method == "zscore" else {},
+        use_output_aggregation=True,
+        aggregation_method=aggregation_method,
+        aggregation_level="sentence",
+        aggregation_params={"max_rounds": max_rounds, "score_threshold": score_threshold}
+    )
+    
+    framework = EnsembleFramework(config)
+    
+    # Run ensemble
+    result = framework.run_ensemble(
+        example=example,
+        model_specs=model_specs,
+        generators=model_pool,
+        scorers=scorers,
+        model_stats=model_stats,
+        max_rounds=max_rounds,
+        score_threshold=score_threshold,
+        **kwargs
+    )
+    
+    # Convert to legacy format
+    return {
+        "output": result["output"],
+        "selected_models": result["selected_models"],
+        "method": f"{model_selection_method}+{ensemble_method}"
+    }
+
+
 def run_zscore_ensemble(
     example: Dict,
     dataset_problems: List[str],
@@ -102,14 +205,51 @@ def run_zscore_ensemble(
     ensemble_method: str = "simple",
     max_rounds: int = 500,
     score_threshold: float = -2
-) -> Dict[str, any]:  # ✅【修改1】原来是 `-> str`，改成返回 Dict，包含 output 和 selected_models
+) -> Dict[str, any]:
+    """
+    Legacy wrapper for backward compatibility.
+    Maintains the original interface while using the new ensemble framework.
+    """
+    logger.info("Using legacy run_zscore_ensemble (consider migrating to new EnsembleFramework)")
+    
+    # Convert stat_store to model_stats format if needed
+    if hasattr(stat_store, 'get_all_stats'):
+        # If stat_store has the method, use it
+        try:
+            model_stats_from_store = stat_store.get_all_stats()
+            # Merge with default stats
+            default_stats = get_default_model_stats()
+            default_stats.update(model_stats_from_store)
+        except Exception as e:
+            logger.warning(f"Failed to get stats from stat_store: {e}, using defaults")
+            default_stats = get_default_model_stats()
+    else:
+        default_stats = get_default_model_stats()
+    
+    return run_ensemble(
+        example=example,
+        model_specs=model_specs,
+        reward_spec=reward_spec,
+        ensemble_method=ensemble_method,
+        model_selection_method="zscore",
+        max_rounds=max_rounds,
+        score_threshold=score_threshold
+    )
 
-    logger.info("[Stage 1] Computing or retrieving reference statistics for all models...")
-    model_pool = GeneratorPool()
-    scorers = ScorerPool()
 
-    # Compute or retrieve statistics for each model
-    model_stats = {
+def get_default_model_stats() -> Dict[str, Dict[str, float]]:
+    """
+    Get default model statistics. In production, this should load from a file.
+    """
+    return {
+        "Qwen/Qwen2.5-0.5B-Instruct": {
+            "ppl_mean": 9.795982360839844,
+            "ppl_std": 22.284496307373047,
+            "conf_mean": 0.6799513101577759,
+            "conf_std": 0.08082679659128189,
+            "weight": 0.2,
+            "size": 0.5
+        },
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {
             "ppl_mean": 9.795982360839844,
             "ppl_std": 22.284496307373047,
@@ -159,63 +299,3 @@ def run_zscore_ensemble(
             "size": 32.0
         }
     }
-    # model_stats = {}
-    # for spec in model_specs:
-    #     model_path = spec["path"]
-    #     generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
-    #     stats = stat_store.compute(model_path, generator.model, generator.tokenizer, generator.device, dataset_problems)
-    #     model_stats[model_path] = stats
-    #     logger.info(
-    #         f"→ Stats for {model_path}: "
-    #         f"PPL µ={stats['ppl_mean']:.2f}, σ={stats['ppl_std']:.2f} | "
-    #         f"Conf µ={stats['conf_mean']:.2f}, σ={stats['conf_std']:.2f}"
-    #     )
-
-    all_generators = {}
-    for spec in model_specs:
-        generator = model_pool.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"))
-        all_generators[spec["path"]] = generator
-        # scorers.register_scorer(generator, weight=model_stats[spec["path"]]["weight"])
-
-    if ensemble_method == "simple":
-        logger.info("[Stage 2] Selecting top models based on z-score (auto model count)...")
-        prompt_builder = lambda q: ConversationTemplate(SYSTEM_PROMPT, q).render()
-        selected_specs = select_top_models_by_z_score(
-            question=example["input"],
-            model_specs=model_specs,
-            prompt_builder=prompt_builder,
-            model_stats=model_stats,
-            model_pool=model_pool,
-            model_count=-1
-        )
-    else:
-        # chosse all models
-        selected_specs = model_specs
-    logger.info(f"✅ Selected models: {[s['path'] for s in selected_specs]}")
-
-    logger.info("[Stage 3] Loading selected generators and reward model...")
-    generators = [all_generators[spec["path"]] for spec in selected_specs]
-
-    # scorers =
-    # scorer = scorer_pool.get_reward(reward_spec["path"], device=reward_spec["device"])
-
-    for spec in reward_spec:
-        scorers.get_scorer(spec)
-    for generator in generators:
-        scorers.register_scorer(generator, weight=model_stats[generator.name]["weight"])
-
-    logger.info("[Stage 4] Running ensemble reasoner...")
-
-    output = ensemble_map[ensemble_method](
-        generators=generators,
-        scorers=scorers,
-        example=example,
-        max_rounds=max_rounds,
-        score_threshold=score_threshold,
-    )
-
-    selected_paths = [s['path'] for s in selected_specs]
-    return {
-        "output": output,  # ✅【新增4】将 reasoner 的输出放在字典中返回
-        "selected_models": selected_paths  # ✅【新增5】同时返回选中模型的名称
-    }  # ✅【修改6】将原 return output 改为返回包含多个信息的字典

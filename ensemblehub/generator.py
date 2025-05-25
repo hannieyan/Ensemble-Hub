@@ -75,6 +75,10 @@ class BaseGenerator:
         """Abstract method for generating model outputs."""
         raise NotImplementedError
 
+    def batch_generate(self, prompts: List, **kw) -> List[GenOutput]:
+        """Abstract method for batch generation."""
+        raise NotImplementedError
+
     def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
         logger.warning(f"PPL calculation not implemented for {self.name} or called on BaseGenerator base class.")
         return None
@@ -110,11 +114,19 @@ class HFGenerator(BaseGenerator):
         elif "qwen2.5" in path.lower():
             data_args = DataArguments(template="qwen")
             self.indent = 2
+        elif "qwen" in path.lower():
+            data_args = DataArguments(template="qwen")
+            self.indent = 2
         elif "deepseek-r1" in path.lower():
+            data_args = DataArguments(template="deepseekr1")
+            self.indent = 1
+        elif "deepseek" in path.lower():
             data_args = DataArguments(template="deepseek3")
             self.indent = 1
         else:
-            raise NotImplementedError(f"Cannot find model template: {path}")
+            logger.warning(f"Unknown model template for {path}, using default")
+            data_args = DataArguments(template="default")
+            self.indent = 1
 
         dataset_attr = DatasetAttr(
             prompt="instruction",
@@ -146,7 +158,7 @@ class HFGenerator(BaseGenerator):
         top_k=50,
         repetition_penalty=1.0,
         stop_strings: Optional[Union[str, List[str]]] = None,
-    ) -> GenOutput:
+    ) -> Union[GenOutput, List[GenOutput]]:
 
         converted = self.converter(dicts)
         prompt_msgs = converted["_prompt"]
@@ -190,6 +202,81 @@ class HFGenerator(BaseGenerator):
                     break
 
         return GenOutput(_trim_text(txt) if not ended else txt, ended)
+
+    @torch.inference_mode()
+    def batch_generate(
+        self,
+        dicts_list: List[dict],
+        *,
+        enable_thinking: bool = False,
+        max_tokens=256,
+        temperature=0.95,
+        top_p=0.7,
+        top_k=50,
+        repetition_penalty=1.0,
+        stop_strings: Optional[Union[str, List[str]]] = None,
+    ) -> List[GenOutput]:
+        """
+        Batch generation for multiple inputs.
+        """
+        # Process all inputs to get prompts
+        all_prompt_texts = []
+        for single_dict in dicts_list:
+            converted = self.converter(single_dict)
+            prompt_msgs = converted["_prompt"]
+            response_msgs = converted["_response"]
+            messages = prompt_msgs + response_msgs
+            prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages, enable_thinking=enable_thinking)
+            
+            ids = prompt_ids + response_ids[:-self.indent]
+            text = self.tokenizer.decode(ids, skip_special_tokens=False)
+            all_prompt_texts.append(text)
+
+        # Tokenize all prompts with padding
+        batch_inputs = self.tokenizer(
+            all_prompt_texts, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True,
+            max_length=2048
+        ).to(self.device)
+
+        cfg = GenerationConfig(
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            max_new_tokens=max_tokens,
+            pad_token_id=self.tokenizer.eos_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            stop_strings=["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
+        )
+        
+        # Generate for all inputs at once
+        outputs = self.model.generate(**batch_inputs, generation_config=cfg, tokenizer=self.tokenizer)
+
+        # Process outputs
+        results = []
+        for i, output in enumerate(outputs):
+            input_length = len(batch_inputs["input_ids"][i])
+            generated_ids = output[input_length:]
+            ended = self.tokenizer.eos_token_id in generated_ids.tolist()
+
+            txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
+
+            if stop_strings:
+                if isinstance(stop_strings, str):
+                    stop_strings = [stop_strings]
+                for s in stop_strings:
+                    if s in txt:
+                        txt = txt.split(s)[0]
+                        ended = True
+                        break
+
+            results.append(GenOutput(_trim_text(txt) if not ended else txt, ended))
+
+        return results
 
 
     @torch.inference_mode()
@@ -282,20 +369,128 @@ class HFGenerator(BaseGenerator):
 # ---------------------------------------------------------------------------
 
 class VLLMGenerator(BaseGenerator):
-    def __init__(self, path: str):
+    def __init__(self, path: str, **vllm_kwargs):
         if not _VLLM_AVAILABLE:
-            raise RuntimeError("vLLM is not installed.")
-        self._llm = LLM(model=path)
-        self._sp = SamplingParams(max_tokens=128, temperature=0.95, top_p=0.7, stop=list(STOP_TOKENS_TEXT))
+            raise RuntimeError("vLLM is not installed. Please install with: pip install vllm")
+        
+        # Default vLLM engine parameters
+        engine_args = {
+            "model": path,
+            "trust_remote_code": True,
+            "tensor_parallel_size": 1,
+            "disable_log_stats": True,
+        }
+        engine_args.update(vllm_kwargs)
+        
+        self._llm = LLM(**engine_args)
+        self._sp = SamplingParams(
+            max_tokens=256,
+            temperature=0.95, 
+            top_p=0.7,
+            stop=list(STOP_TOKENS_TEXT),
+            skip_special_tokens=True
+        )
         self.name = path
         self._eos_text = EOS_TEXT
 
+        # Setup tokenizer and template like HFGenerator
+        from transformers import AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+        
+        if "qwen3" in path.lower():
+            data_args = DataArguments(template="qwen")
+            self.indent = 2
+        elif "qwen2.5" in path.lower():
+            data_args = DataArguments(template="qwen")
+            self.indent = 2
+        elif "deepseek-r1" in path.lower():
+            data_args = DataArguments(template="deepseek3")
+            self.indent = 1
+        else:
+            # Default template
+            data_args = DataArguments(template="default")
+            self.indent = 1
+
+        dataset_attr = DatasetAttr(
+            prompt="instruction",
+            query="input", 
+            response="output",
+            load_from="file",
+            formatting="alpaca",
+            dataset_name="",
+        )
+
+        self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=data_args)
+        self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
+
+    def _dict_to_prompt(self, example_dict: dict) -> str:
+        """Convert dict format to prompt string."""
+        try:
+            converted = self.converter(example_dict)
+            prompt_msgs = converted["_prompt"]
+            response_msgs = converted["_response"]
+            messages = prompt_msgs + response_msgs
+            prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages)
+            
+            ids = prompt_ids + response_ids[:-self.indent]
+            text = self.tokenizer.decode(ids, skip_special_tokens=False)
+            return text
+        except Exception as e:
+            logger.warning(f"Failed to convert dict to prompt for vLLM: {e}")
+            # Fallback to simple format
+            instruction = example_dict.get("instruction", "")
+            input_text = example_dict.get("input", "")
+            return f"{instruction}\n{input_text}"
+
     @torch.inference_mode()
-    def generate(self, prompt: str, *, max_tokens=30, temperature=0.95, top_p=0.7) -> GenOutput:
-        self._sp.max_tokens, self._sp.temperature, self._sp.top_p = max_tokens, temperature, top_p
-        txt = self._llm.generate([prompt], self._sp)[0].outputs[0].text
-        ended = txt.endswith(self._eos_text)
-        return GenOutput(_trim_text(txt), ended)
+    def generate(self, dicts, *, max_tokens=256, temperature=0.95, top_p=0.7, **kwargs) -> GenOutput:
+        """Generate for single dict input."""
+        if isinstance(dicts, str):
+            # Handle direct string prompt
+            prompt = dicts
+        else:
+            # Handle dict format like HFGenerator
+            prompt = self._dict_to_prompt(dicts)
+        
+        self._sp.max_tokens = max_tokens
+        self._sp.temperature = temperature
+        self._sp.top_p = top_p
+        
+        try:
+            output = self._llm.generate([prompt], self._sp)[0]
+            txt = output.outputs[0].text
+            ended = txt.endswith(self._eos_text) or output.outputs[0].finish_reason == "stop"
+            return GenOutput(_trim_text(txt) if not ended else txt, ended)
+        except Exception as e:
+            logger.error(f"vLLM generation failed: {e}")
+            return GenOutput("", False)
+
+    @torch.inference_mode()
+    def batch_generate(self, dicts_list: List[dict], *, max_tokens=256, temperature=0.95, top_p=0.7, **kwargs) -> List[GenOutput]:
+        """Batch generation for vLLM."""
+        # Convert all dicts to prompts
+        prompts = []
+        for example_dict in dicts_list:
+            if isinstance(example_dict, str):
+                prompts.append(example_dict)
+            else:
+                prompts.append(self._dict_to_prompt(example_dict))
+        
+        self._sp.max_tokens = max_tokens
+        self._sp.temperature = temperature
+        self._sp.top_p = top_p
+        
+        try:
+            outputs = self._llm.generate(prompts, self._sp)
+            results = []
+            for output in outputs:
+                txt = output.outputs[0].text
+                ended = txt.endswith(self._eos_text) or output.outputs[0].finish_reason == "stop"
+                results.append(GenOutput(_trim_text(txt) if not ended else txt, ended))
+            return results
+        except Exception as e:
+            logger.error(f"vLLM batch generation failed: {e}")
+            return [GenOutput("", False) for _ in dicts_list]
 
 
 # ---------------------------------------------------------------------------

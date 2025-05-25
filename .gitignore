@@ -3,3 +3,16 @@
 
 # Ignore all DS_Store files in the project
 .DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Test output files  
+test/*.json
+test/*.jsonl
+
+# Selection output files (exclude data/)
+ensemblehub/selection/output/
+ensemblehub/selection/z_score/

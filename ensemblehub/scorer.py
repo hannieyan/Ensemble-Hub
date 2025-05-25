@@ -51,34 +51,108 @@ class BaseScorer:
 import requests
 
 class APIScorer(BaseScorer):
-    def __init__(self, endpoint: str):
+    def __init__(self, endpoint: str, timeout: int = 30, model_name: str = "your_reward_model_id", max_retries: int = 3):
         self.endpoint = endpoint
+        self.timeout = timeout
+        self.model_name = model_name
+        self.max_retries = max_retries
 
     def score(self, prompt: str, completions: List[str]) -> List[float]:
         """
         Sends a POST request with the input completions to an external scoring API.
-        The prompt is concatenated with each completion before being sent.
-        Expected API format:
+        Compatible with lm-evaluation-harness and LlamaFactory formats.
+        Includes retry logic for robustness.
+        
+        Expected API formats:
+        1. Standard format:
+            POST {endpoint}
+            {
+                "model": "your_model_name_or_id", 
+                "messages": ["prompt + completion 1", "prompt + completion 2", ...]
+            }
+        
+        2. LlamaFactory format:
             POST {endpoint}
             {
                 "model": "your_model_name_or_id",
-                "messages": ["prompt + completion 1", "prompt + completion 2", ...]
+                "prompt": "base_prompt",
+                "completions": ["completion1", "completion2", ...]
             }
         """
-        messages = [prompt + c for c in completions]
-        payload = {
-            "model": "your_reward_model_id",
-            "messages": messages
-        }
-        try:
-            response = requests.post(self.endpoint, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            scores = result.get("scores")
-            return scores
-        except Exception as e:
-            print(f"[APIScorer] Request failed: {e}")
-            return [0.0] * len(completions)
+        # Try LlamaFactory format first, then fall back to standard format
+        payloads = [
+            {
+                "model": self.model_name,
+                "prompt": prompt,
+                "completions": completions
+            },
+            {
+                "model": self.model_name,
+                "messages": [prompt + c for c in completions]
+            }
+        ]
+        
+        for attempt in range(self.max_retries):
+            for payload_idx, payload in enumerate(payloads):
+                try:
+                    logger.debug(f"[APIScorer] Attempt {attempt+1}/{self.max_retries}, format {payload_idx+1}: {self.endpoint} with {len(completions)} completions")
+                    
+                    response = requests.post(
+                        self.endpoint, 
+                        json=payload, 
+                        timeout=self.timeout,
+                        headers={"Content-Type": "application/json"}
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    # Extract scores from response
+                    scores = result.get("scores") or result.get("results")
+                    if scores is None:
+                        if payload_idx == 0:  # Try next format
+                            continue
+                        logger.error(f"[APIScorer] API response missing 'scores' or 'results' field")
+                        return [0.0] * len(completions)
+                    
+                    # Validate score count
+                    if len(scores) != len(completions):
+                        logger.warning(f"[APIScorer] Expected {len(completions)} scores, got {len(scores)}")
+                        # Pad or truncate to match expected length
+                        if len(scores) < len(completions):
+                            scores.extend([0.0] * (len(completions) - len(scores)))
+                        else:
+                            scores = scores[:len(completions)]
+                    
+                    # Validate and clean scores
+                    validated_scores = []
+                    for i, score in enumerate(scores):
+                        try:
+                            float_score = float(score) if score is not None else 0.0
+                            if math.isnan(float_score) or math.isinf(float_score):
+                                float_score = 0.0
+                            validated_scores.append(float_score)
+                        except (ValueError, TypeError):
+                            logger.warning(f"[APIScorer] Invalid score at index {i}: {score}, using 0.0")
+                            validated_scores.append(0.0)
+                    
+                    logger.info(f"[APIScorer] Successfully scored {len(validated_scores)} completions")
+                    return validated_scores
+                    
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"[APIScorer] Request failed (attempt {attempt+1}, format {payload_idx+1}): {e}")
+                    if payload_idx == len(payloads) - 1 and attempt == self.max_retries - 1:
+                        logger.error(f"[APIScorer] All retry attempts failed")
+                        return [0.0] * len(completions)
+                    continue
+                except Exception as e:
+                    logger.error(f"[APIScorer] Unexpected error (attempt {attempt+1}, format {payload_idx+1}): {e}")
+                    if payload_idx == len(payloads) - 1 and attempt == self.max_retries - 1:
+                        return [0.0] * len(completions)
+                    continue
+        
+        # Fallback if all attempts failed
+        logger.error(f"[APIScorer] All scoring attempts failed, returning default scores")
+        return [0.0] * len(completions)
 
 
 # ---------------------------------------------------------------------------
