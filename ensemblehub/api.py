@@ -528,6 +528,12 @@ if __name__ == "__main__":
     parser.add_argument("--model_specs", type=str, default=None,
                        help="Model specifications in format 'model1:engine:device,model2:engine:device'")
     
+    # vLLM specific options
+    parser.add_argument("--vllm_enforce_eager", action="store_true",
+                       help="Disable CUDA graphs in vLLM (fixes memory allocation errors)")
+    parser.add_argument("--vllm_disable_chunked_prefill", action="store_true", 
+                       help="Disable chunked prefill in vLLM (fixes conflicts)")
+    
     args = parser.parse_args()
     
     # Create app with configuration

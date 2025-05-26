@@ -244,6 +244,39 @@ The API is fully compatible with lm-evaluation-harness for benchmarking ensemble
    # Run evaluations on different ports to compare methods
    ```
 
+## 🛠️ Troubleshooting
+
+### vLLM CUDA Memory Allocation Error
+
+If you encounter this error when using vLLM:
+```
+captures_underway.empty() INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachingAllocator.cpp":3085
+```
+
+**Solutions:**
+
+1. **Use command line flags (Recommended):**
+   ```bash
+   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill
+   ```
+
+2. **Switch to HuggingFace engine:**
+   ```bash
+   # Change from "engine": "vllm" to "engine": "hf" in model specs
+   python -m ensemblehub.api --model_specs 'model_path:hf:cuda:0'
+   ```
+
+3. **Set environment variable:**
+   ```bash
+   export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+   python -m ensemblehub.api
+   ```
+
+### Common Issues
+
+- **Memory errors**: Reduce batch size or use smaller models
+- **Import errors**: Ensure all dependencies are installed with `pip install -r requirements.txt`
+- **Model loading fails**: Check model paths and GPU memory availability
 
 ## ✍️ Extending
 

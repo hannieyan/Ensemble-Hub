@@ -380,4 +380,56 @@ python test/test_api.py
 curl http://localhost:8000/status
 ```
 
+## 🛠️ 故障排除
+
+### vLLM CUDA 内存分配错误
+
+如果你在使用 vLLM 引擎时遇到以下错误：
+```
+captures_underway.empty() INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachingAllocator.cpp":3085
+```
+
+**解决方案：**
+
+1. **使用命令行参数修复（推荐）：**
+   ```bash
+   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill
+   ```
+
+2. **切换到 HuggingFace 引擎：**
+   ```bash
+   # 将模型配置从 "engine": "vllm" 改为 "engine": "hf"
+   python -m ensemblehub.api --model_specs 'model_path:hf:cuda:0'
+   ```
+
+3. **环境变量设置：**
+   ```bash
+   export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+   python -m ensemblehub.api
+   ```
+
+### 常见问题
+
+**Q: API 启动后无法访问？**
+A: 检查防火墙设置，确保端口未被占用：
+```bash
+curl http://localhost:8000/status
+```
+
+**Q: 模型加载失败？**
+A: 检查模型路径和设备配置，确保有足够的 GPU 内存：
+```bash
+nvidia-smi  # 检查 GPU 使用情况
+```
+
+**Q: 集成方法配置无效？**
+A: 确保使用 `python -m ensemblehub.api` 而不是 `uvicorn` 来启动：
+```bash
+# ✅ 正确
+python -m ensemblehub.api --ensemble_method loop
+
+# ❌ 不支持自定义配置
+uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
+```
+
 这个增强的 API 提供了完全的灵活性，让你可以根据需要选择和配置不同的集成方法！
