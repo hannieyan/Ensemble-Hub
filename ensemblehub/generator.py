@@ -92,7 +92,7 @@ class BaseGenerator:
 # ---------------------------------------------------------------------------
 
 class HFGenerator(BaseGenerator):
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, **model_kwargs):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         
         # Memory optimization parameters
@@ -103,13 +103,19 @@ class HFGenerator(BaseGenerator):
             "attn_implementation": "eager",  # Use eager attention to avoid potential issues
         }
         
-        # Add optional quantization for large models to save memory
-        model_size_gb = self._estimate_model_size(path)
-        if model_size_gb > 20:  # For models > 20GB, use 8-bit quantization
+        # Add quantization based on user parameter
+        if quantization == "8bit":
             try:
                 import bitsandbytes as bnb
                 memory_optimization["load_in_8bit"] = True
-                logger.info(f"Using 8-bit quantization for large model {path} ({model_size_gb:.1f}GB)")
+                logger.info(f"Using 8-bit quantization for model {path}")
+            except ImportError:
+                logger.warning(f"bitsandbytes not available, loading {path} without quantization. Consider installing: pip install bitsandbytes")
+        elif quantization == "4bit":
+            try:
+                import bitsandbytes as bnb
+                memory_optimization["load_in_4bit"] = True
+                logger.info(f"Using 4-bit quantization for model {path}")
             except ImportError:
                 logger.warning(f"bitsandbytes not available, loading {path} without quantization. Consider installing: pip install bitsandbytes")
         
@@ -135,19 +141,6 @@ class HFGenerator(BaseGenerator):
         self.name = path
         self.__post_init__()
     
-    def _estimate_model_size(self, path: str) -> float:
-        """Estimate model size in GB based on model name"""
-        path_lower = path.lower()
-        if "32b" in path_lower:
-            return 64.0  # ~64GB for 32B model
-        elif "14b" in path_lower:
-            return 28.0  # ~28GB for 14B model  
-        elif "7b" in path_lower:
-            return 14.0  # ~14GB for 7B model
-        elif "1.5b" in path_lower:
-            return 3.0   # ~3GB for 1.5B model
-        else:
-            return 10.0  # Default estimate
 
     def __post_init__(self):
         """Initialize template and converter after model loading"""
@@ -562,23 +555,23 @@ class VLLMGenerator(BaseGenerator):
 # ---------------------------------------------------------------------------
 
 class GeneratorPool:
-    _gen_cache: Dict[Tuple[str, str], BaseGenerator] = {}
+    _gen_cache: Dict[Tuple[str, str, str], BaseGenerator] = {}
     _reward_cache: Dict[str, str] = {}
 
     @classmethod
-    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None) -> BaseGenerator:
+    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none") -> BaseGenerator:
         """
         Load a generator model (e.g., HF or vLLM) to a specified device (e.g., 'cuda:0', 'cpu').
         """
-        key = (engine, path)
+        key = (engine, path, quantization)  # Include quantization in cache key
         if key not in cls._gen_cache:
-            logger.info("[Pool] loading %s (%s)", path, engine)
+            logger.info("[Pool] loading %s (%s) with quantization=%s", path, engine, quantization)
 
             resolved_device = device or "auto"
             logger.info(f"→ Assigned to device: {resolved_device}")
 
             if engine == "hf":
-                cls._gen_cache[key] = HFGenerator(path, device=resolved_device)
+                cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization)
             elif engine == "vllm":
                 cls._gen_cache[key] = VLLMGenerator(path, device=resolved_device)
             else:
