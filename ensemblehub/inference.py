@@ -5,7 +5,7 @@ from pathlib import Path
 from tqdm import tqdm
 from datasets import load_dataset
 
-from ensemblehub.utils import run_zscore_ensemble, ModelStatStore
+from ensemblehub.utils import run_zscore_ensemble, run_ensemble, ModelStatStore
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -37,7 +37,10 @@ def run_batch_inference(
     batch_size: int = 1,
     ensemble_method: str = "simple",
     max_rounds: int = 500,
-    score_threshold: float = -2.0
+    score_threshold: float = -2.0,
+    progressive_mode: str = "length",
+    length_thresholds: list = None,
+    special_tokens: list = None
 ):
     # Validate inputs
     if not Path(input_path).exists():
@@ -86,15 +89,17 @@ def run_batch_inference(
 
             try:
                 logger.debug(f"Processing example {i * batch_size + len(batch_results) + 1}")
-                result = run_zscore_ensemble(
+                result = run_ensemble(
                     example=example,
-                    dataset_problems=math_problem_stats,
                     model_specs=model_specs,
                     reward_spec=reward_spec,
-                    stat_store=stat_store,
                     ensemble_method=ensemble_method,
+                    model_selection_method="zscore",  # Default to zscore for backward compatibility
                     max_rounds=max_rounds,
-                    score_threshold=score_threshold
+                    score_threshold=score_threshold,
+                    progressive_mode=progressive_mode,
+                    length_thresholds=length_thresholds,
+                    special_tokens=special_tokens
                 )
 
                 prediction_text = result["output"].strip() if result["output"] else ""
@@ -141,8 +146,21 @@ def main():
     )
     parser.add_argument(
         "--ensemble_method", type=str, default="simple",
-        choices=["simple", "random", "loop"],
+        choices=["simple", "random", "loop", "progressive"],
         help="Ensemble method to use (default: simple)"
+    )
+    parser.add_argument(
+        "--progressive_mode", type=str, default="length",
+        choices=["length", "token"],
+        help="Progressive selector mode: length or token (default: length)"
+    )
+    parser.add_argument(
+        "--length_thresholds", type=str, default="1000,2000,3000",
+        help="Comma-separated length thresholds for progressive mode (default: 1000,2000,3000)"
+    )
+    parser.add_argument(
+        "--special_tokens", type=str, default="<think>",
+        help="Comma-separated special tokens for progressive mode (default: <think>)"
     )
     parser.add_argument(
         "--max_rounds", type=int, default=500,
@@ -155,19 +173,29 @@ def main():
 
     args = parser.parse_args()
 
-    # 加载 MATH-500 的问题文本作为参考
+    # Load MATH-500 problems as reference
     math_dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
     math_problems = [x["problem"] for x in math_dataset]
 
-    # 模型配置
-    model_specs = [
-        {"path": "Qwen/Qwen2.5-0.5B-Instruct",           "engine": "hf", "device": "mps"},
-        # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
-        # {"path": "Qwen/Qwen3-4B",                             "engine": "hf", "device": "cuda:2"},
-        # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf", "device": "cuda:6"},
-        # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf", "device": "cuda:4"},
-        # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf", "device": "cuda:5"},
-    ]
+    # Parse progressive parameters
+    length_thresholds = [int(x.strip()) for x in args.length_thresholds.split(",")] if args.length_thresholds else None
+    special_tokens = [x.strip() for x in args.special_tokens.split(",")] if args.special_tokens else None
+
+    # Model configuration - Support both Qwen models for progressive inference
+    if args.ensemble_method == "progressive":
+        model_specs = [
+            {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "cpu"},  # Larger model first
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "cpu"},  # Smaller model second
+        ]
+    else:
+        model_specs = [
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "cpu"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
+            # {"path": "Qwen/Qwen3-4B",                             "engine": "hf", "device": "cuda:2"},
+            # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf", "device": "cuda:6"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf", "device": "cuda:4"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf", "device": "cuda:5"},
+        ]
 
     reward_spec = [
         # {"path": "Qwen/Qwen2.5-Math-PRM-7B",                  "engine": "hf_rm",  "device": "cuda:0", "weight": 0.2},
@@ -185,7 +213,10 @@ def main():
         batch_size=args.batch_size,
         ensemble_method=args.ensemble_method,
         max_rounds=args.max_rounds,
-        score_threshold=args.score_threshold
+        score_threshold=args.score_threshold,
+        progressive_mode=args.progressive_mode,
+        length_thresholds=length_thresholds,
+        special_tokens=special_tokens
     )
 
 

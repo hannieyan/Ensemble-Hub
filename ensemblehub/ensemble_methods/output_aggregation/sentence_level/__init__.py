@@ -7,10 +7,12 @@ from .base import BaseSentenceAggregator
 from .reward_based import RewardBasedSelector
 from .random_selector import RandomSentenceSelector
 from .round_robin import RoundRobinSelector
+from .progressive_selector import ProgressiveSelector
 
 __all__ = [
     "BaseSentenceAggregator",
     "RewardBasedSelector",
     "RandomSentenceSelector",
-    "RoundRobinSelector"
+    "RoundRobinSelector",
+    "ProgressiveSelector"
 ]

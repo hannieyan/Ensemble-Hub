@@ -183,6 +183,105 @@ def test_simple_ensemble():
         logger.error(f"❌ Simple ensemble failed: {e}")
         return False
 
+def test_progressive_selector():
+    """Test ProgressiveSelector with actual models."""
+    logger.info("Testing ProgressiveSelector...")
+    
+    try:
+        from ensemblehub.generator import HFGenerator
+        from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
+        
+        # Create a simple constant scorer for testing
+        class ConstantScorer:
+            def __init__(self, score=1.0):
+                self.score = score
+            
+            def score(self, prompt: str, completions):
+                return [self.score] * len(completions)
+        
+        # Use suggested models
+        model_paths = [
+            "Qwen/Qwen2.5-0.5B-Instruct",  # Smaller model
+            "Qwen/Qwen2.5-1.5B-Instruct"   # Larger model
+        ]
+        
+        # Load generators
+        generators = []
+        for i, model_path in enumerate(model_paths):
+            logger.info(f"Loading model {i+1}: {model_path}")
+            try:
+                generator = HFGenerator(model_path, device="cpu")
+                generators.append(generator)
+            except Exception as e:
+                logger.warning(f"Failed to load {model_path}: {e}")
+                # Use single model as fallback
+                if i == 1 and generators:
+                    logger.info("Using first model as fallback for second model")
+                    generators.append(generators[0])
+                elif i == 0:
+                    raise
+        
+        # Test length-based selector
+        length_selector = ProgressiveSelector(
+            switch_mode="length",
+            length_thresholds=[30, 60],  # Small thresholds for testing
+            name="TestLengthSelector"
+        )
+        
+        scorer = ConstantScorer(score=1.0)
+        
+        example = {
+            "instruction": "You are a helpful assistant.",
+            "input": "Explain artificial intelligence in detail.",
+            "output": ""
+        }
+        
+        logger.info("Testing length-based progressive selection...")
+        result = length_selector.aggregate_generation(
+            generators=generators,
+            scorers=[scorer],
+            example=example,
+            max_rounds=5,
+            max_new_tokens_per_round=25
+        )
+        
+        logger.info(f"Length-based result preview: {result[:100]}...")
+        assert len(result) > 0, "Generated text should not be empty"
+        
+        # Test token-based selector
+        token_selector = ProgressiveSelector(
+            switch_mode="token",
+            special_tokens=[r"think"],  # Simple token for testing
+            name="TestTokenSelector"
+        )
+        
+        example2 = {
+            "instruction": "Think step by step and use the word 'think' in your response.",
+            "input": "What are the benefits of renewable energy?",
+            "output": ""
+        }
+        
+        logger.info("Testing token-based progressive selection...")
+        result2 = token_selector.aggregate_generation(
+            generators=generators,
+            scorers=[scorer],
+            example=example2,
+            max_rounds=4,
+            max_new_tokens_per_round=30
+        )
+        
+        logger.info(f"Token-based result preview: {result2[:100]}...")
+        assert len(result2) > 0, "Generated text should not be empty"
+        
+        logger.info("ProgressiveSelector test successful")
+        return True
+        
+    except Exception as e:
+        logger.error(f"ProgressiveSelector test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def test_legacy_compatibility():
     """Test that legacy run_zscore_ensemble still works."""
     logger.info("Testing legacy compatibility...")
@@ -238,6 +337,7 @@ def main():
         ("Batch Generation", test_batch_generation),
         ("Simple Ensemble", test_simple_ensemble),
         ("Z-score Selection", test_zscore_selection),
+        ("Progressive Selector", test_progressive_selector),
         ("Legacy Compatibility", test_legacy_compatibility),
     ]
     

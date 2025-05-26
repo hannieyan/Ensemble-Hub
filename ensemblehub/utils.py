@@ -24,6 +24,9 @@ from ensemblehub.ensemble_methods import (
     RoundRobinSelector
 )
 
+# Import ProgressiveSelector
+from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
+
 # Legacy support - map ensemble methods to new classes
 ensemble_map = {
     "simple": RewardBasedSelector,
@@ -31,6 +34,7 @@ ensemble_map = {
     "loop": RoundRobinSelector,
     "reward_based": RewardBasedSelector,
     "round_robin": RoundRobinSelector,
+    "progressive": ProgressiveSelector,
 }
 
 # Model selection methods
@@ -120,6 +124,9 @@ def run_ensemble(
     model_selection_method: str = "zscore", 
     max_rounds: int = 500,
     score_threshold: float = -2.0,
+    progressive_mode: str = "length",
+    length_thresholds: List[int] = None,
+    special_tokens: List[str] = None,
     **kwargs
 ) -> Dict[str, any]:
     """
@@ -159,9 +166,19 @@ def run_ensemble(
     method_mapping = {
         "simple": "reward_based",
         "random": "random", 
-        "loop": "round_robin"
+        "loop": "round_robin",
+        "progressive": "progressive"
     }
     aggregation_method = method_mapping.get(ensemble_method, ensemble_method)
+    
+    # Handle progressive-specific parameters
+    aggregation_params = {"max_rounds": max_rounds, "score_threshold": score_threshold}
+    if ensemble_method == "progressive":
+        aggregation_params.update({
+            "switch_mode": progressive_mode,
+            "length_thresholds": length_thresholds or [1000, 2000, 3000],
+            "special_tokens": special_tokens or [r"<think>"]
+        })
     
     # Create ensemble framework
     config = EnsembleConfig(
@@ -171,7 +188,7 @@ def run_ensemble(
         use_output_aggregation=True,
         aggregation_method=aggregation_method,
         aggregation_level="sentence",
-        aggregation_params={"max_rounds": max_rounds, "score_threshold": score_threshold}
+        aggregation_params=aggregation_params
     )
     
     framework = EnsembleFramework(config)
