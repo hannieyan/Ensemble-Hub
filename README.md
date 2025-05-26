@@ -272,6 +272,30 @@ captures_underway.empty() INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachi
    python -m ensemblehub.api
    ```
 
+### HuggingFace Meta Tensor Error
+
+If you encounter this error when using HuggingFace:
+```
+Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead
+```
+
+**Solutions:**
+
+1. **Use eager attention (Recommended):**
+   ```bash
+   python -m ensemblehub.api --hf_use_eager_attention
+   ```
+
+2. **Use auto device assignment:**
+   ```bash
+   python -m ensemblehub.api --model_specs 'model_path:hf:auto'
+   ```
+
+3. **Downgrade transformers:**
+   ```bash
+   pip install transformers==4.35.0
+   ```
+
 ### Common Issues
 
 - **Memory errors**: Reduce batch size or use smaller models

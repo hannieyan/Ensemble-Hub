@@ -534,6 +534,12 @@ if __name__ == "__main__":
     parser.add_argument("--vllm_disable_chunked_prefill", action="store_true", 
                        help="Disable chunked prefill in vLLM (fixes conflicts)")
     
+    # HuggingFace specific options
+    parser.add_argument("--hf_use_eager_attention", action="store_true", default=True,
+                       help="Use eager attention implementation (fixes meta tensor errors)")
+    parser.add_argument("--hf_disable_device_map", action="store_true",
+                       help="Disable device_map for specific device assignment (fixes meta tensor errors)")
+    
     args = parser.parse_args()
     
     # Create app with configuration

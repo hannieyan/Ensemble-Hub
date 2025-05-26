@@ -94,14 +94,29 @@ class BaseGenerator:
 class HFGenerator(BaseGenerator):
     def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            path,
-            torch_dtype=dtype,
-            device_map=device,
-            trust_remote_code=True
-        ).eval()
+        
+        # Handle meta tensor issue with proper loading strategy
+        if device == "auto":
+            # Use device_map for auto device assignment
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path,
+                torch_dtype=dtype,
+                device_map="auto",
+                trust_remote_code=True,
+                attn_implementation="eager"  # Use eager attention to avoid potential issues
+            ).eval()
+            self.device = next(self.model.parameters()).device
+        else:
+            # For specific device, avoid device_map and load directly to target device
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path,
+                torch_dtype=dtype,
+                trust_remote_code=True,
+                attn_implementation="eager"  # Use eager attention to avoid potential issues
+            ).eval().to(device)
+            self.device = torch.device(device)
+            
         self.name = path
-        self.device = next(self.model.parameters()).device if device == "auto" else torch.device(device)
 
         # Optional stop string list
         self.stop_strings = list(STOP_TOKENS_TEXT) + [
