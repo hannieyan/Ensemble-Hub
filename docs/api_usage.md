@@ -465,6 +465,44 @@ Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() i
    python -m ensemblehub.api --model_specs 'model_path:hf:auto'
    ```
 
+### GPU 内存不足错误
+
+如果你遇到以下错误：
+```
+CUDA error: out of memory
+```
+
+**解决方案：**
+
+1. **使用量化减少内存占用（推荐）：**
+   ```bash
+   # 使用 8-bit 量化
+   python -m ensemblehub.api --hf_use_8bit
+   
+   # 使用 4-bit 量化（更节省内存）
+   python -m ensemblehub.api --hf_use_4bit
+   ```
+
+2. **减少同时加载的模型数量：**
+   ```bash
+   # 只使用较小的模型
+   python -m ensemblehub.api --model_specs 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B:hf:cuda:0,deepseek-ai/DeepSeek-R1-Distill-Qwen-7B:hf:cuda:1'
+   ```
+
+3. **使用 CPU 运行大模型：**
+   ```bash
+   # 将大模型移到 CPU 上
+   python -m ensemblehub.api --model_specs 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B:hf:cpu'
+   ```
+
+4. **清理 GPU 缓存：**
+   ```bash
+   # 在运行前清理 GPU 缓存
+   export CUDA_LAUNCH_BLOCKING=1
+   python -c "import torch; torch.cuda.empty_cache()"
+   python -m ensemblehub.api
+   ```
+
 ### 常见问题
 
 **Q: API 启动后无法访问？**

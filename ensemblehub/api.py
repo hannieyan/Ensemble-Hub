@@ -545,6 +545,12 @@ if __name__ == "__main__":
                        help="Use eager attention implementation (fixes meta tensor errors)")
     parser.add_argument("--hf_disable_device_map", action="store_true",
                        help="Disable device_map for specific device assignment (fixes meta tensor errors)")
+    parser.add_argument("--hf_use_8bit", action="store_true",
+                       help="Use 8-bit quantization for large models (saves GPU memory)")
+    parser.add_argument("--hf_use_4bit", action="store_true",
+                       help="Use 4-bit quantization for large models (saves more GPU memory)")
+    parser.add_argument("--hf_low_cpu_mem", action="store_true", default=True,
+                       help="Use low CPU memory loading (default: True)")
     
     args = parser.parse_args()
     

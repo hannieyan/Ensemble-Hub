@@ -92,54 +92,87 @@ class BaseGenerator:
 # ---------------------------------------------------------------------------
 
 class HFGenerator(BaseGenerator):
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+        
+        # Memory optimization parameters
+        memory_optimization = {
+            "low_cpu_mem_usage": True,
+            "torch_dtype": dtype,
+            "trust_remote_code": True,
+            "attn_implementation": "eager",  # Use eager attention to avoid potential issues
+        }
+        
+        # Add optional quantization for large models to save memory
+        model_size_gb = self._estimate_model_size(path)
+        if model_size_gb > 20:  # For models > 20GB, use 8-bit quantization
+            try:
+                import bitsandbytes as bnb
+                memory_optimization["load_in_8bit"] = True
+                logger.info(f"Using 8-bit quantization for large model {path} ({model_size_gb:.1f}GB)")
+            except ImportError:
+                logger.warning(f"bitsandbytes not available, loading {path} without quantization. Consider installing: pip install bitsandbytes")
+        
+        memory_optimization.update(model_kwargs)
         
         # Handle meta tensor issue with proper loading strategy
         if device == "auto":
             # Use device_map for auto device assignment
             self.model = AutoModelForCausalLM.from_pretrained(
                 path,
-                torch_dtype=dtype,
                 device_map="auto",
-                trust_remote_code=True,
-                attn_implementation="eager"  # Use eager attention to avoid potential issues
+                **memory_optimization
             ).eval()
             self.device = next(self.model.parameters()).device
         else:
             # For specific device, avoid device_map and load directly to target device
             self.model = AutoModelForCausalLM.from_pretrained(
                 path,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                attn_implementation="eager"  # Use eager attention to avoid potential issues
+                **memory_optimization
             ).eval().to(device)
             self.device = torch.device(device)
             
         self.name = path
+        self.__post_init__()
+    
+    def _estimate_model_size(self, path: str) -> float:
+        """Estimate model size in GB based on model name"""
+        path_lower = path.lower()
+        if "32b" in path_lower:
+            return 64.0  # ~64GB for 32B model
+        elif "14b" in path_lower:
+            return 28.0  # ~28GB for 14B model  
+        elif "7b" in path_lower:
+            return 14.0  # ~14GB for 7B model
+        elif "1.5b" in path_lower:
+            return 3.0   # ~3GB for 1.5B model
+        else:
+            return 10.0  # Default estimate
 
+    def __post_init__(self):
+        """Initialize template and converter after model loading"""
         # Optional stop string list
         self.stop_strings = list(STOP_TOKENS_TEXT) + [
             self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
         ]
 
-        if "qwen3" in path.lower():
+        if "qwen3" in self.name.lower():
             data_args = DataArguments(template="qwen")
             self.indent = 2
-        elif "qwen2.5" in path.lower():
+        elif "qwen2.5" in self.name.lower():
             data_args = DataArguments(template="qwen")
             self.indent = 2
-        elif "qwen" in path.lower():
+        elif "qwen" in self.name.lower():
             data_args = DataArguments(template="qwen")
             self.indent = 2
-        elif "deepseek-r1" in path.lower():
+        elif "deepseek-r1" in self.name.lower():
             data_args = DataArguments(template="deepseekr1")
             self.indent = 1
-        elif "deepseek" in path.lower():
+        elif "deepseek" in self.name.lower():
             data_args = DataArguments(template="deepseek3")
             self.indent = 1
         else:
-            logger.warning(f"Unknown model template for {path}, using default")
+            logger.warning(f"Unknown model template for {self.name}, using default")
             data_args = DataArguments(template="default")
             self.indent = 1
 
@@ -153,7 +186,6 @@ class HFGenerator(BaseGenerator):
         )
 
         self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=data_args)
-
         self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
 
         # self.suppress_tokens = self.tokenizer.encode("</think>", add_special_tokens=False) + \
