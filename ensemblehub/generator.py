@@ -426,31 +426,38 @@ class VLLMGenerator(BaseGenerator):
         if not _VLLM_AVAILABLE:
             raise RuntimeError("vLLM is not installed. Please install with: pip install vllm")
         
+        # Store original device
+        self._original_device = device
+        
         # 借鉴 LlamaFactory 的成功配置，适配单卡大模型
         engine_args = {
             "model": path,
             "trust_remote_code": True,
             "dtype": "bfloat16",  # 使用 bfloat16 节省内存
             "max_model_len": 4096,  # 适中的context长度，避免OOM
-            "tensor_parallel_size": 1,  # 单卡推理
             "disable_log_stats": True,
             "enforce_eager": True,  # Disable CUDA graphs to avoid caching allocator issues
-            # 移除有问题的参数，使用 vLLM 默认设置
         }
         
-        # Store original device for cleanup
-        self._original_device = device
-        
-        # 如果指定了特定设备，通过环境变量设置
-        import os
-        original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        self._original_cuda_devices = original_cuda_devices
-        
-        if device.startswith("cuda:"):
-            device_id = int(device.split(":")[1])
-            # vLLM will use the first visible device, so we set only the target device
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
-            logger.info(f"Setting CUDA_VISIBLE_DEVICES={device_id} for vLLM model {path}")
+        # Handle GPU placement for vLLM
+        if device == "auto" or device.startswith("cuda"):
+            if device.startswith("cuda:"):
+                device_id = int(device.split(":")[1])
+                # For vLLM, we need to set tensor_parallel_size and use environment variable
+                # The key is to set this BEFORE vLLM initialization
+                import os
+                # Save original for cleanup
+                self._original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+                
+                # Set CUDA_VISIBLE_DEVICES to only show the target GPU
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+                logger.info(f"Set CUDA_VISIBLE_DEVICES={device_id} for vLLM on {path}")
+                
+                # vLLM will use the only visible device
+                engine_args["tensor_parallel_size"] = 1
+            else:
+                # Auto device selection
+                engine_args["tensor_parallel_size"] = 1
         
         # 更新用户自定义参数
         engine_args.update(vllm_kwargs)
@@ -534,6 +541,7 @@ class VLLMGenerator(BaseGenerator):
                 os.environ["CUDA_VISIBLE_DEVICES"] = self._original_cuda_devices
             else:
                 os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            logger.info(f"Restored CUDA_VISIBLE_DEVICES to: {self._original_cuda_devices}")
 
     def _dict_to_prompt(self, example_dict: dict) -> str:
         """Convert dict format to prompt string."""
@@ -614,6 +622,7 @@ class GeneratorPool:
     _reward_cache: Dict[str, str] = {}
     _vllm_lock = threading.Lock()  # Lock for vLLM initialization
     _vllm_instances = {}  # Track active vLLM instances by device
+    _initialized_devices = set()  # Track which devices have been initialized
 
     @classmethod
     def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none") -> BaseGenerator:
