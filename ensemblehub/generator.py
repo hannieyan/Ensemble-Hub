@@ -12,6 +12,13 @@ from .generators.base import BaseGenerator, GenOutput
 from .generators.hf import HFGenerator
 from .generators.vllm import VLLMGenerator
 
+# Optional Ray-based vLLM
+try:
+    from .generators.vllm_ray import VLLMRayGenerator
+    _VLLM_RAY_AVAILABLE = True
+except ImportError:
+    _VLLM_RAY_AVAILABLE = False
+
 logger = logging.getLogger("ensemble_inference")
 
 
@@ -65,6 +72,11 @@ class GeneratorPool:
                         instance = VLLMGenerator(path, device=resolved_device)
                         cls._gen_cache[key] = instance
                         cls._vllm_instances[resolved_device] = instance
+            elif engine == "vllm_ray":
+                # Ray-based vLLM for better multi-GPU support
+                if not _VLLM_RAY_AVAILABLE:
+                    raise RuntimeError("VLLMRayGenerator not available. Please install ray: pip install ray")
+                cls._gen_cache[key] = VLLMRayGenerator(path, device=resolved_device)
             else:
                 raise ValueError(f"Unknown engine: {engine}")
         return cls._gen_cache[key]

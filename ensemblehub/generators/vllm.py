@@ -40,13 +40,12 @@ except ImportError:
 class VLLMGenerator(BaseGenerator):
     """vLLM-based text generator for high-throughput inference"""
     
-    def __init__(self, path: str, device: str = "cuda:0", use_multiprocess: bool = False, **vllm_kwargs):
+    def __init__(self, path: str, device: str = "cuda:0", **vllm_kwargs):
         if not _VLLM_AVAILABLE:
             raise RuntimeError("vLLM is not installed. Please install with: pip install vllm")
         
         # Store original device
         self._original_device = device
-        self.use_multiprocess = use_multiprocess
         
         # Base vLLM configuration
         engine_args = {
