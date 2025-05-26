@@ -177,7 +177,7 @@ def run_ensemble(
         aggregation_params.update({
             "switch_mode": progressive_mode,
             "length_thresholds": length_thresholds or [1000, 2000, 3000],
-            "special_tokens": special_tokens or [r"<think>"]
+            "special_tokens": special_tokens or [r"<\think>"]
         })
     
     # Create ensemble framework

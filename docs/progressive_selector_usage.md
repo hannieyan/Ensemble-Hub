@@ -120,8 +120,8 @@ print(f"Generated result: {result}")
 - **Fine-grained control**: `[200, 400, 600]` - For scenarios requiring frequent switching
 
 ### Token-based Switching Mode
-- **Chain of thought**: `[r"<think>"]` - Large model thinks, small model expresses
-- **Multi-stage analysis**: `[r"<think>", r"<analyze>", r"<conclude>"]` - For complex analysis tasks
+- **Chain of thought**: `[r"<\think>"]` - Large model reasons until </think>, then small model continues
+- **Multi-stage analysis**: `[r"<\think>", r"<\analyze>", r"<\conclude>"]` - For complex analysis tasks
 - **Natural language markers**: `[r"then", r"next"]` - Use natural language as switching points
 
 ## Important Notes
@@ -158,6 +158,6 @@ python -m ensemblehub.inference \
     --output_path output/progressive_token.jsonl \
     --ensemble_method progressive \
     --progressive_mode token \
-    --special_tokens "<think>,<analyze>" \
+    --special_tokens "<\\think>,<\\analyze>" \
     --max_rounds 8
 ```

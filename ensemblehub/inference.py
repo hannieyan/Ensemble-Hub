@@ -159,8 +159,8 @@ def main():
         help="Comma-separated length thresholds for progressive mode (default: 1000,2000,3000)"
     )
     parser.add_argument(
-        "--special_tokens", type=str, default="<think>",
-        help="Comma-separated special tokens for progressive mode (default: <think>)"
+        "--special_tokens", type=str, default="<\\think>",
+        help="Comma-separated special tokens for progressive mode (default: <\\think>)"
     )
     parser.add_argument(
         "--max_rounds", type=int, default=500,

@@ -5,7 +5,7 @@
         "output": "Machine learning is a method where computers learn patterns from data to make predictions or decisions without being explicitly programmed for each specific task."
     },
     {
-        "instruction": "Think step by step and use special tokens to structure your reasoning.",
+        "instruction": "Think step by step. Use <think> to start your reasoning and <\\think> to end your reasoning, then provide your final answer.",
         "input": "What are the main benefits of renewable energy sources?",
         "output": "Renewable energy sources offer environmental sustainability, economic benefits, and energy security."
     }
