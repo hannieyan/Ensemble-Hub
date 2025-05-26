@@ -7,41 +7,41 @@ Enhanced API v2.0 支持灵活的集成方法选择和配置。
 ### 基础启动
 ```bash
 # 使用默认配置在项目根目录下启动
-python ensemblehub/api.py
+python -m ensemblehub.api
 
 # 或使用 uvicorn（仅支持服务器配置，不支持集成方法配置）
 uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
 ```
 
 ### 命令行配置启动
-**注意：集成方法配置仅在使用 `python ensemblehub/api.py` 启动时有效，uvicorn 启动方式不支持这些自定义参数。**
+**注意：集成方法配置仅在使用 `python -m ensemblehub.api` 启动时有效，uvicorn 启动方式不支持这些自定义参数。**
 
 ```bash
 # 配置服务器地址和端口
-python ensemblehub/api.py --host 0.0.0.0 --port 8080
+python -m ensemblehub.api --host 0.0.0.0 --port 8080
 
 # 配置模型选择和集成方法
-python ensemblehub/api.py --model_selection_method zscore --ensemble_method progressive
+python -m ensemblehub.api --model_selection_method zscore --ensemble_method progressive
 
 # 配置循环推理（不使用模型选择）
-python ensemblehub/api.py --model_selection_method all --ensemble_method loop --max_rounds 5
+python -m ensemblehub.api --model_selection_method all --ensemble_method loop --max_rounds 5
 
 # 配置渐进式集成
-python ensemblehub/api.py --ensemble_method progressive --progressive_mode length \
+python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
   --length_thresholds 50,100,200 --max_rounds 3
 
 # 配置随机选择集成
-python ensemblehub/api.py --model_selection_method all --ensemble_method random --max_rounds 3
+python -m ensemblehub.api --model_selection_method all --ensemble_method random --max_rounds 3
 
 # 配置循环选择集成（轮询模式）
-python ensemblehub/api.py --model_selection_method all --ensemble_method loop \
+python -m ensemblehub.api --model_selection_method all --ensemble_method loop \
   --max_rounds 5 --max_repeat 2
 
 # 配置自定义模型
-python ensemblehub/api.py --model_specs '[{"path":"model1","engine":"hf"},{"path":"model2","engine":"hf"}]'
+python -m ensemblehub.api --model_specs '[{"path":"model1","engine":"hf"},{"path":"model2","engine":"hf"}]'
 
 # 完整配置示例
-python ensemblehub/api.py \
+python -m ensemblehub.api \
   --host 0.0.0.0 --port 8080 \
   --model_selection_method zscore \
   --ensemble_method progressive \
@@ -101,6 +101,7 @@ python ensemblehub/api.py \
 
 ### 3. 推理端点
 - `POST /v1/chat/completions` - OpenAI 兼容的聊天完成
+- `POST /v1/loop/completions` - 专用循环推理端点（轮询模式）
 - `POST /v1/ensemble/inference` - 直接集成推理
 - `POST /v1/ensemble/batch` - 批量推理
 
@@ -142,7 +143,23 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 }'
 ```
 
-### 3. 直接集成推理
+### 3. 循环推理端点（轮询模式）
+
+```bash
+curl -X POST "http://localhost:8000/v1/loop/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "ensemble",
+  "prompt": "解释量子计算的基本原理",
+  "max_tokens": 300,
+  "ensemble_config": {
+    "max_rounds": 5,
+    "score_threshold": -1.5
+  }
+}'
+```
+
+### 4. 直接集成推理
 
 ```bash
 curl -X POST "http://localhost:8000/v1/ensemble/inference" \
@@ -165,7 +182,7 @@ curl -X POST "http://localhost:8000/v1/ensemble/inference" \
 }'
 ```
 
-### 4. 仅使用模型选择（不聚合输出）
+### 5. 仅使用模型选择（不聚合输出）
 
 ```bash
 curl -X POST "http://localhost:8000/v1/ensemble/presets/selection_only" \
@@ -177,7 +194,7 @@ curl -X POST "http://localhost:8000/v1/ensemble/presets/selection_only" \
 }'
 ```
 
-### 5. 仅使用输出聚合（所有模型）
+### 6. 仅使用输出聚合（所有模型）
 
 ```bash
 curl -X POST "http://localhost:8000/v1/ensemble/presets/aggregation_only" \
@@ -190,7 +207,7 @@ curl -X POST "http://localhost:8000/v1/ensemble/presets/aggregation_only" \
 }'
 ```
 
-### 6. 批量推理
+### 7. 批量推理
 
 ```bash
 curl -X POST "http://localhost:8000/v1/ensemble/batch" \

@@ -25,28 +25,60 @@ The project is under active development.
 * **Singleton caches** – models load once and are reused on repeated calls (even across API requests).
 
 
-## Ensemble Methods
+## 🎯 Ensemble Methods
 
+Ensemble-Hub supports multiple ensemble strategies that can be easily configured:
 
+### Model Selection Methods
+- **`zscore`**: Statistical selection based on perplexity and confidence scores
+- **`all`**: Use all available models (no selection)
+- **`random`**: Randomly select a subset of models
 
+### Output Aggregation Methods
+- **`simple`**: Reward-based selection using scoring models (default)
+- **`progressive`**: Length or token-based model switching during generation
+- **`random`**: Random selection from model outputs
+- **`loop`**: Round-robin cycling through models (循环推理)
+
+### Progressive Ensemble Options
+- **Length-based**: Switch models based on output length thresholds
+- **Token-based**: Switch models when encountering special tokens
+- **Mixed mode**: Combine both approaches
+
+### Configuration Examples
+```bash
+# Reward-based ensemble with statistical model selection
+python -m ensemblehub.api --model_selection_method zscore --ensemble_method simple
+
+# Round-robin through all models
+python -m ensemblehub.api --model_selection_method all --ensemble_method loop
+
+# Progressive ensemble with length switching
+python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
+  --length_thresholds 100,300,500
+```
 
 
 ## 🗂 Repository layout
 
 ```
-ensemble-inference/
-├── ensemble_inference.py        # High-level interface (run_ensemble, ModelPool)
-├── ensemble_api_server.py       # FastAPI server for REST API
-├── v6/                          # Latest core modules
-│   ├── generator.py             # Generator classes (HF & vLLM backends)
-│   ├── scorer.py                # Reward model classes (PRMScorer, APIScorer, etc.)
-│   ├── ensemble.py              # Multi-model reasoning loop (uses generators & scorers)
-│   └── data/                    # Prompt templates, dataset converters, etc.
-├── notebooks/
-│   └── quick_demo.ipynb         # Colab/Jupyter walkthrough
-├── configs/
-│   └── example.yaml             # Demo config – three DeepSeek models + reward
-├── requirements.txt             # Minimal dependencies
+Ensemble-Hub/
+├── ensemblehub/                 # Main package
+│   ├── api.py                   # FastAPI server with command line configuration
+│   ├── ensemble.py              # Core ensemble framework
+│   ├── generator.py             # Model generators (HF, vLLM backends)
+│   ├── scorer.py                # Reward models and scoring
+│   ├── inference.py             # Inference pipeline
+│   ├── utils.py                 # Utility functions
+│   └── ensemble_methods/        # Ensemble method implementations
+│       ├── model_selection/     # Model selection strategies
+│       └── output_aggregation/  # Output aggregation methods
+├── data/                        # Datasets (AIME, GSM8K, MATH, etc.)
+├── docs/                        # Documentation
+│   └── api_usage.md            # Complete API usage guide
+├── test/                        # Test suite
+├── scripts/                     # Utility scripts
+├── requirements.txt             # Dependencies
 └── README.md                    # You're here!
 ```
 
@@ -85,67 +117,131 @@ python -m ensemblehub.inference \
 
 ### 🚀 Start the REST API
 
-1. **Create a YAML config** (see `configs/example.yaml` for a template)
+#### Quick Start with Default Configuration
 
-   ```yaml
-   models:
-     - path: /models/DeepSeek-R1-Distill-Qwen-1.5B
-       engine: hf
-     - path: /models/DeepSeek-R1-Distill-Qwen-7B
-       engine: hf
-   reward_path: /models/Qwen2.5-Math-PRM-7B
-   ```
+```bash
+# Basic startup with default models
+python -m ensemblehub.api
 
-2. **Launch the server**
+# Or use uvicorn (without ensemble configuration)
+uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
+```
+
+#### Advanced Configuration with Command Line Arguments
+
+```bash
+# Configure different ensemble methods
+python -m ensemblehub.api --model_selection_method all --ensemble_method random
+
+# Loop/Round-robin inference (循环推理)
+python -m ensemblehub.api --model_selection_method all --ensemble_method loop --max_rounds 5
+
+# Progressive ensemble with length-based switching
+python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
+  --length_thresholds 50,100,200 --max_rounds 3
+
+# Statistical model selection with reward-based aggregation
+python -m ensemblehub.api --model_selection_method zscore --ensemble_method simple \
+  --score_threshold -1.5 --max_rounds 10
+
+# Custom server configuration
+python -m ensemblehub.api --host 0.0.0.0 --port 9876 \
+  --ensemble_method loop --show_attribution
+```
+
+**Available Configuration Options:**
+- **Model Selection**: `zscore` (statistical), `all` (use all models), `random`
+- **Ensemble Methods**: `simple` (reward-based), `progressive`, `random`, `loop` (round-robin)
+- **Progressive Options**: `--progressive_mode`, `--length_thresholds`, `--special_tokens`
+- **General**: `--max_rounds`, `--score_threshold`, `--show_attribution`
+
+> **Note**: Command line ensemble configuration only works with `python -m ensemblehub.api`. When using `uvicorn`, only server settings (host/port) are configurable.
+
+#### Testing the API
+
+1. **Health Check**
 
    ```bash
-   uvicorn ensemblehub.api:app --host 0.0.0.0 --port 9876
+   curl http://localhost:8000/status
+   # ➜ {"status":"ready", "available_methods": [...]}
    ```
 
-3. **Ping the server**
+2. **Basic Chat Completion**
 
    ```bash
-   curl http://localhost:9876/status
-   # ➜ {"status":"ready"}
-   ```
-
-4. **Ask a question**
-
-   ```bash
-   export OPENAI_API_KEY=sk-xxxxx  # 先设置一次就行
-   curl -X POST http://localhost:9876/v1/chat/completions \
+   curl -X POST http://localhost:8000/v1/chat/completions \
        -H "Content-Type: application/json" \
        -d '{
-           "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+           "model": "ensemble",
            "prompt": "What is the capital of France?",
            "max_tokens": 50
        }'
    ```
 
-5. **Benchmark the server with lm-evaluation-harness**
+3. **Ensemble with Custom Configuration**
 
-   Install lm-evaluation-harness:
+   ```bash
+   curl -X POST http://localhost:8000/v1/chat/completions \
+       -H "Content-Type: application/json" \
+       -d '{
+           "model": "ensemble",
+           "prompt": "Solve: 2x + 3 = 7",
+           "max_tokens": 100,
+           "ensemble_config": {
+               "model_selection_method": "zscore",
+               "aggregation_method": "reward_based",
+               "use_model_selection": true,
+               "use_output_aggregation": true
+           }
+       }'
+   ```
+
+4. **Loop/Round-robin Endpoint** (dedicated endpoint for 循环推理)
+
+   ```bash
+   curl -X POST http://localhost:8000/v1/loop/completions \
+       -H "Content-Type: application/json" \
+       -d '{
+           "model": "ensemble",
+           "prompt": "Explain quantum computing",
+           "max_tokens": 200
+       }'
+   ```
+
+For complete API documentation, visit: http://localhost:8000/docs
+
+#### LM-Evaluation-Harness Integration
+
+The API is fully compatible with lm-evaluation-harness for benchmarking ensemble methods:
+
+1. **Install lm-evaluation-harness:**
    ```shell
    git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
    cd lm-evaluation-harness
    pip install -e .
    ```
-   
-   Run evaluation on CoQA:
+
+2. **Run ensemble evaluation:**
    ```bash
+   # Start API with specific ensemble configuration
+   python -m ensemblehub.api --ensemble_method loop --model_selection_method all &
+   
+   # Run evaluation against the ensemble API
    lm_eval \
      --model openai-completions \
      --tasks gsm8k \
-     --model_args model=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B,base_url=http://localhost:9876,v1=True,tokenizer_backend=None \
+     --model_args model=ensemble,base_url=http://localhost:8000,v1=True,tokenizer_backend=None \
      --batch_size 1
    ```
-   
-   Run evaluation with single model:
+
+3. **Compare different ensemble methods:**
    ```bash
-   accelerate launch -m lm_eval --model hf \
-       --model_args pretrained=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B \
-       --tasks gsm8k,mmlu_generative,arc_challenge_chat,triviaqa,nq_open,bbh \
-       --batch_size 8
+   # Test different configurations
+   python -m ensemblehub.api --ensemble_method random --port 8001 &
+   python -m ensemblehub.api --ensemble_method simple --port 8002 &
+   python -m ensemblehub.api --ensemble_method progressive --port 8003 &
+   
+   # Run evaluations on different ports to compare methods
    ```
 
 
@@ -160,11 +256,16 @@ python -m ensemblehub.inference \
 - [x] Multi-model inference
 - [x] Reward model selection
 - [x] HuggingFace backend
+- [x] FastAPI server with OpenAI-compatible endpoints
+- [x] Command line configuration for ensemble methods
+- [x] Model attribution tracking
+- [x] Progressive ensemble methods
+- [x] LM-evaluation-harness compatibility
 - [ ] vLLM backends
 - [ ] API support for closed-source models
-- [ ] Streaming API interface (FastAPI)
-- [ ] Improved scorer aggregation
-- [ ] Config-driven pipelines
+- [ ] Streaming API interface (SSE)
+- [ ] Web interface for ensemble configuration
+- [ ] Advanced scorer aggregation methods
 
 ## 📜 License
 
