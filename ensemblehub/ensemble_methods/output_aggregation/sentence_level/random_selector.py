@@ -6,7 +6,7 @@ import random
 import logging
 from typing import List, Dict, Any, Tuple
 
-from .base import BaseSentenceAggregator
+from .base import BaseSentenceAggregator, ModelAttribution
 from ....conversation import ConversationTemplate
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         
         last_output = None
         repeat_count = 0
+        self.attribution = ModelAttribution()  # Reset attribution for new generation
         
         for rnd in range(1, max_rounds + 1):
             prompt = convo.render()
@@ -85,6 +86,10 @@ class RandomSentenceSelector(BaseSentenceAggregator):
             selected_generator = random.choice(available_gens)
             dicts = convo.render_dict()
             best_output = selected_generator.generate(dicts, max_tokens=max_new_tokens_per_round)
+            
+            # Record model attribution
+            model_name = getattr(selected_generator, 'model_path', selected_generator.name)
+            self.attribution.add_segment(best_output.text, model_name, rnd)
             
             # Check for repetition
             if best_output.text == last_output:

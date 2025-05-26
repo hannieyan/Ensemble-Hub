@@ -40,7 +40,9 @@ def run_batch_inference(
     score_threshold: float = -2.0,
     progressive_mode: str = "length",
     length_thresholds: list = None,
-    special_tokens: list = None
+    special_tokens: list = None,
+    model_selection_method: str = "all",
+    show_attribution: bool = False
 ):
     # Validate inputs
     if not Path(input_path).exists():
@@ -94,7 +96,7 @@ def run_batch_inference(
                     model_specs=model_specs,
                     reward_spec=reward_spec,
                     ensemble_method=ensemble_method,
-                    model_selection_method="zscore",  # Default to zscore for backward compatibility
+                    model_selection_method=model_selection_method,
                     max_rounds=max_rounds,
                     score_threshold=score_threshold,
                     progressive_mode=progressive_mode,
@@ -104,6 +106,21 @@ def run_batch_inference(
 
                 prediction_text = result["output"].strip() if result["output"] else ""
                 selected_models = result.get("selected_models", [])
+                attribution_data = result.get("attribution", {})
+                
+                # Debug attribution data
+                if show_attribution:
+                    logger.debug(f"Result keys: {list(result.keys())}")
+                    if attribution_data:
+                        logger.debug(f"Attribution data keys: {list(attribution_data.keys())}")
+                    else:
+                        logger.debug("No attribution data found in result")
+                
+                # Log attribution summary if available
+                if attribution_data and "summary" in attribution_data:
+                    logger.info(f"Model attribution: {attribution_data['summary']}")
+                elif show_attribution:
+                    logger.warning("show_attribution=True but no attribution data available")
                 
                 logger.debug(f"Successfully processed example, prediction length: {len(prediction_text)}")
 
@@ -112,13 +129,24 @@ def run_batch_inference(
                 logger.error(f"Question preview: {question[:80]}...")
                 prediction_text = ""
                 selected_models = []
+                attribution_data = {}  # Keep empty dict for failed examples
 
-            batch_results.append({
+            # Prepare result with attribution information
+            result_entry = {
                 "prompt": prompt,
                 "predict": prediction_text,
                 "label": answer.strip(),
                 "selected_models": selected_models
-            })
+            }
+            
+            # Add attribution data if available and requested
+            if attribution_data and show_attribution:
+                result_entry["attribution"] = attribution_data
+                # Add formatted text with attribution markers for easy reading
+                if "formatted_text" in attribution_data:
+                    result_entry["predict_with_attribution"] = attribution_data["formatted_text"]
+            
+            batch_results.append(result_entry)
 
         # Write batch results
         for result in batch_results:
@@ -170,6 +198,15 @@ def main():
         "--score_threshold", type=float, default=-2.0,
         help="Score threshold for ensemble reasoning (default: -2.0)"
     )
+    parser.add_argument(
+        "--model_selection_method", type=str, default="all",
+        choices=["zscore", "all", "random"],
+        help="Model selection method: zscore (statistical), all (use all models), random (default: all)"
+    )
+    parser.add_argument(
+        "--show_attribution", action="store_true",
+        help="Include detailed model attribution information in output"
+    )
 
     args = parser.parse_args()
 
@@ -211,7 +248,9 @@ def main():
         score_threshold=args.score_threshold,
         progressive_mode=args.progressive_mode,
         length_thresholds=length_thresholds,
-        special_tokens=special_tokens
+        special_tokens=special_tokens,
+        model_selection_method=args.model_selection_method,
+        show_attribution=args.show_attribution
     )
 
 

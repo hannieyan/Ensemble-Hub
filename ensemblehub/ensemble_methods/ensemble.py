@@ -217,11 +217,21 @@ class EnsembleFramework:
             result = first_gen.generate({"prompt": prompt}, max_tokens=kwargs.get("max_tokens", 256))
             output = result.text
         
+        # Get model attribution data if available
+        attribution_data = None
+        if self.config.use_output_aggregation and hasattr(self.output_aggregator, 'get_attribution_data'):
+            try:
+                attribution_data = self.output_aggregator.get_attribution_data()
+                if attribution_data:
+                    logger.debug(f"Retrieved attribution data with keys: {list(attribution_data.keys())}")
+            except Exception as e:
+                logger.warning(f"Failed to get attribution data: {e}")
+        
         # Return results
         selected_paths = [s['path'] for s in selected_specs]
         method_name = f"{self.config.model_selection_method if self.config.use_model_selection else 'no_selection'}+{self.config.aggregation_method if self.config.use_output_aggregation else 'no_aggregation'}"
         
-        return {
+        result = {
             "output": output,
             "selected_models": selected_paths,
             "method": method_name,
@@ -230,6 +240,13 @@ class EnsembleFramework:
                 "output_aggregation": f"{self.config.aggregation_method}_{self.config.aggregation_level}" if self.config.use_output_aggregation else None,
             }
         }
+        
+        # Add attribution data if available
+        if attribution_data:
+            result["attribution"] = attribution_data
+            logger.debug(f"Added attribution data to result")
+            
+        return result
     
     @classmethod
     def create_simple_ensemble(cls, ensemble_method: str = "reward_based", model_selection_method: str = "all") -> 'EnsembleFramework':

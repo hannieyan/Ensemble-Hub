@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Tuple
 import torch
 from concurrent.futures import ThreadPoolExecutor
 
-from .base import BaseSentenceAggregator
+from .base import BaseSentenceAggregator, ModelAttribution
 from ....conversation import ConversationTemplate
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ class RewardBasedSelector(BaseSentenceAggregator):
         
         last_output = None
         repeat_count = 0
+        self.attribution = ModelAttribution()  # Reset attribution for new generation
         
         # Log scorers
         try:
@@ -150,6 +151,11 @@ class RewardBasedSelector(BaseSentenceAggregator):
             if best_score <= score_threshold:
                 logger.info(f"Stop: best score {best_score:.2f} < threshold {score_threshold}")
                 continue
+            
+            # Record model attribution
+            best_generator = available_gens[best_idx]
+            model_name = getattr(best_generator, 'model_path', best_generator.name)
+            self.attribution.add_segment(best_sentence, model_name, rnd)
             
             # Check for repetition
             if best_sentence == last_output:

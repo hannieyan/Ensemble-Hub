@@ -205,12 +205,18 @@ def run_ensemble(
         **kwargs
     )
     
-    # Convert to legacy format
-    return {
+    # Convert to legacy format - preserve all data including attribution
+    legacy_result = {
         "output": result["output"],
         "selected_models": result["selected_models"],
         "method": f"{model_selection_method}+{ensemble_method}"
     }
+    
+    # Add attribution data if available
+    if "attribution" in result:
+        legacy_result["attribution"] = result["attribution"]
+    
+    return legacy_result
 
 
 def run_zscore_ensemble(

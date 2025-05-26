@@ -1,11 +1,12 @@
 """
-Enhanced API Server for Ensemble-Hub
+Unified API Server for Ensemble-Hub
 
-Supports flexible ensemble configuration including:
-- Model selection methods (zscore, all, random, etc.)
-- Output aggregation methods (reward_based, random, round_robin, etc.)
-- Custom ensemble configurations
-- Multiple endpoint formats for compatibility
+Features:
+- Single unified endpoint `/v1/chat/completions`
+- Automatic batch detection (str vs list input)
+- Support for model attribution tracking
+- OpenAI-compatible interface
+- Flexible ensemble configuration
 """
 
 from typing import Union, Dict, Any, Optional, List
@@ -14,68 +15,75 @@ from pydantic import BaseModel, Field
 import time
 import uuid
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
-# Import new ensemble framework
-from ensemblehub.ensemble_methods import EnsembleFramework, EnsembleConfig
+# Import ensemble framework
 from ensemblehub.utils import run_ensemble, get_default_model_stats
 from ensemblehub.generator import GeneratorPool
 from ensemblehub.scorer import ScorerPool
 
 logger = logging.getLogger(__name__)
 
-# Pydantic models for API requests
+# Pydantic models
 class Message(BaseModel):
     role: str
     content: str
 
-class EnsembleMethodConfig(BaseModel):
-    """Configuration for ensemble methods"""
-    model_selection_method: str = Field(default="all", description="Model selection method: zscore, all, random, llm_blender")
-    model_selection_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for model selection")
+class EnsembleConfig(BaseModel):
+    """Ensemble configuration parameters"""
+    # Model selection
+    model_selection_method: str = Field(default="all", description="Model selection: zscore, all, random")
     
-    aggregation_method: str = Field(default="reward_based", description="Output aggregation method: reward_based, random, round_robin")
-    aggregation_level: str = Field(default="sentence", description="Aggregation level: sentence, token, response") 
-    aggregation_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for output aggregation")
+    # Output aggregation  
+    ensemble_method: str = Field(default="simple", description="Ensemble method: simple, progressive, random, loop")
+    progressive_mode: Optional[str] = Field(default="length", description="Progressive mode: length, token")
+    length_thresholds: Optional[List[int]] = Field(default=None, description="Length thresholds for progressive mode")
+    special_tokens: Optional[List[str]] = Field(default=None, description="Special tokens for progressive mode")
     
-    use_model_selection: bool = Field(default=True, description="Whether to use model selection")
-    use_output_aggregation: bool = Field(default=True, description="Whether to use output aggregation")
+    # Generation parameters
+    max_rounds: int = Field(default=500, description="Maximum generation rounds")
+    score_threshold: float = Field(default=-2.0, description="Score threshold for early stopping")
+    
+    # Attribution
+    show_attribution: bool = Field(default=False, description="Include model attribution information")
 
 class ChatCompletionRequest(BaseModel):
+    """Unified chat completion request - handles both single and batch"""
+    
+    # Core OpenAI-compatible fields
     model: str = Field(default="ensemble", description="Model identifier")
-    prompt: Union[str, List[str]] = Field(..., description="Input prompt(s)")
+    messages: Union[List[Message], List[List[Message]]] = Field(..., description="Single conversation or list of conversations")
+    
+    # Generation parameters
     max_tokens: int = Field(default=256, description="Maximum tokens to generate")
     temperature: float = Field(default=1.0, description="Sampling temperature")
     stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
     
     # Ensemble configuration
-    ensemble_config: Optional[EnsembleMethodConfig] = Field(default=None, description="Ensemble method configuration")
+    ensemble_config: Optional[EnsembleConfig] = Field(default=None, description="Ensemble configuration")
     
-    # Legacy support
-    ensemble_method: Optional[str] = Field(default=None, description="Legacy: ensemble method (simple, random, loop)")
-    model_selection_method: Optional[str] = Field(default=None, description="Legacy: model selection method")
+    # Legacy support (for backward compatibility)
+    prompt: Optional[Union[str, List[str]]] = Field(default=None, description="Legacy prompt field")
 
-class EnsembleRequest(BaseModel):
-    """Direct ensemble inference request"""
-    instruction: str = Field(default="", description="System instruction")
-    input: str = Field(..., description="User input")
-    output: str = Field(default="", description="Expected output (for training)")
-    
-    ensemble_config: EnsembleMethodConfig = Field(default_factory=EnsembleMethodConfig, description="Ensemble configuration")
-    
-    max_rounds: int = Field(default=500, description="Maximum generation rounds")
-    score_threshold: float = Field(default=-2.0, description="Score threshold for early stopping")
-    max_tokens: int = Field(default=256, description="Maximum tokens per generation")
+class ChatCompletionChoice(BaseModel):
+    index: int
+    message: Message
+    finish_reason: str
+    metadata: Optional[Dict[str, Any]] = None
 
-class BatchRequest(BaseModel):
-    """Batch inference request"""
-    examples: List[EnsembleRequest] = Field(..., description="List of examples to process")
-    batch_size: int = Field(default=1, description="Batch size for processing")
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+    usage: Dict[str, int]
 
 # API Application
 app = FastAPI(
     title="Ensemble-Hub API",
-    description="Enhanced ensemble inference API with flexible method selection",
-    version="2.0.0"
+    description="Unified ensemble inference API with automatic batch detection",
+    version="3.0.0"
 )
 
 # Global configuration
@@ -83,26 +91,17 @@ class APIConfig:
     def __init__(self):
         # Default model specifications
         self.model_specs = [
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "mps"},
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "engine": "hf", "device": "cpu"},
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "engine": "hf", "device": "cpu"},
+            {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "cpu"},
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "cpu"},
         ]
         
-        # Default reward specifications  
+        # Default reward specifications
         self.reward_spec = [
             # Add your reward models here
-            # {"path": "Qwen/Qwen2.5-Math-PRM-7B", "engine": "hf_rm", "device": "cuda:0", "weight": 0.5},
-            # {"path": "http://localhost:8000/v1/score/evaluation", "engine": "api", "weight": 0.3},
         ]
         
         # Default ensemble configuration
-        self.default_ensemble_config = EnsembleMethodConfig(
-            model_selection_method="all",
-            aggregation_method="reward_based",
-            aggregation_level="sentence",
-            use_model_selection=True,
-            use_output_aggregation=True
-        )
+        self.default_ensemble_config = EnsembleConfig()
         
         # Initialize pools
         self.generator_pool = GeneratorPool()
@@ -112,21 +111,110 @@ class APIConfig:
 # Global API configuration
 api_config = APIConfig()
 
+def extract_user_content(messages: List[Message]) -> str:
+    """Extract user content from messages list"""
+    # Find the last user message
+    user_messages = [msg for msg in messages if msg.role == "user"]
+    if not user_messages:
+        raise ValueError("No user message found in conversation")
+    
+    return user_messages[-1].content
+
+def process_single_request(
+    messages: List[Message], 
+    ensemble_config: EnsembleConfig,
+    max_tokens: int,
+    temperature: float,
+    stop: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Process a single chat completion request"""
+    
+    # Extract content from messages
+    user_content = extract_user_content(messages)
+    
+    # Find system message if any
+    system_messages = [msg for msg in messages if msg.role == "system"]
+    instruction = system_messages[0].content if system_messages else "You are a helpful assistant."
+    
+    # Create example for ensemble
+    example = {
+        "instruction": instruction,
+        "input": user_content,
+        "output": ""
+    }
+    
+    # Prepare ensemble parameters
+    ensemble_params = {
+        "example": example,
+        "model_specs": api_config.model_specs,
+        "reward_spec": api_config.reward_spec,
+        "ensemble_method": ensemble_config.ensemble_method,
+        "model_selection_method": ensemble_config.model_selection_method,
+        "max_rounds": ensemble_config.max_rounds,
+        "score_threshold": ensemble_config.score_threshold,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "show_attribution": ensemble_config.show_attribution
+    }
+    
+    # Add progressive-specific parameters
+    if ensemble_config.ensemble_method == "progressive":
+        ensemble_params.update({
+            "progressive_mode": ensemble_config.progressive_mode,
+            "length_thresholds": ensemble_config.length_thresholds or [1000, 2000, 3000],
+            "special_tokens": ensemble_config.special_tokens or [r"<\think>"]
+        })
+    
+    # Run ensemble inference
+    result = run_ensemble(**ensemble_params)
+    
+    output = result["output"]
+    
+    # Apply stop sequences
+    finish_reason = "length"
+    if stop:
+        for stop_seq in stop:
+            if stop_seq in output:
+                output = output.split(stop_seq)[0]
+                finish_reason = "stop"
+                break
+    
+    # Check if output ends naturally
+    if output.endswith(("<|im_end|>", "</s>", "<|endoftext|>")):
+        finish_reason = "stop"
+    
+    # Create metadata
+    metadata = {
+        "selected_models": result.get("selected_models", []),
+        "method": result.get("method", "unknown")
+    }
+    
+    # Add attribution if available
+    if "attribution" in result:
+        metadata["attribution"] = result["attribution"]
+    
+    return {
+        "content": output,
+        "finish_reason": finish_reason,
+        "metadata": metadata,
+        "prompt_tokens": len(user_content.split()),
+        "completion_tokens": len(output.split())
+    }
+
 @app.get("/")
 def root():
     """Root endpoint with API information"""
     return {
         "name": "Ensemble-Hub API",
-        "version": "2.0.0",
-        "description": "Enhanced ensemble inference with flexible method selection",
-        "endpoints": {
-            "/status": "Health check",
-            "/v1/chat/completions": "Chat completion (OpenAI compatible)",
-            "/v1/ensemble/inference": "Direct ensemble inference",
-            "/v1/ensemble/batch": "Batch ensemble inference",
-            "/v1/ensemble/methods": "List available methods",
-            "/v1/ensemble/config": "Get/set ensemble configuration"
-        }
+        "version": "3.0.0",
+        "description": "Unified ensemble inference with automatic batch detection",
+        "endpoint": "/v1/chat/completions",
+        "features": [
+            "Automatic single/batch detection",
+            "Model attribution tracking", 
+            "Progressive ensemble methods",
+            "OpenAI-compatible interface"
+        ]
     }
 
 @app.get("/status")
@@ -134,53 +222,139 @@ def status():
     """Health check endpoint"""
     return {
         "status": "ready",
+        "version": "3.0.0",
         "available_methods": {
             "model_selection": ["zscore", "all", "random"],
-            "output_aggregation": ["reward_based", "random", "round_robin"],
-            "aggregation_levels": ["sentence", "token", "response"]
+            "ensemble_methods": ["simple", "progressive", "random", "loop"]
         },
         "model_count": len(api_config.model_specs),
         "reward_count": len(api_config.reward_spec)
     }
 
-@app.get("/v1/ensemble/methods")
-def list_methods():
-    """List available ensemble methods"""
-    return {
-        "model_selection_methods": {
-            "zscore": "Z-score based model selection using perplexity and confidence",
-            "all": "Use all available models",
-            "random": "Randomly select subset of models",
-            "llm_blender": "LLM-Blender model selection (if implemented)"
-        },
-        "output_aggregation_methods": {
-            "reward_based": "Select outputs based on reward model scores",
-            "random": "Randomly select from generated outputs",
-            "round_robin": "Round-robin selection from models"
-        },
-        "aggregation_levels": {
-            "sentence": "Aggregate at sentence/segment level during generation", 
-            "token": "Aggregate at token level (e.g., GaC)",
-            "response": "Aggregate complete responses (e.g., voting)"
-        }
-    }
-
-@app.get("/v1/ensemble/config")
-def get_config():
-    """Get current ensemble configuration"""
-    return {
-        "model_specs": api_config.model_specs,
-        "reward_spec": api_config.reward_spec,
-        "default_ensemble_config": api_config.default_ensemble_config.dict()
-    }
+@app.post("/v1/chat/completions")
+def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
+    """
+    Unified chat completion endpoint with automatic batch detection.
+    
+    Automatically detects:
+    - Single request: messages is List[Message] 
+    - Batch request: messages is List[List[Message]]
+    
+    Returns OpenAI-compatible response format.
+    """
+    try:
+        # Use provided config or default
+        ensemble_config = req.ensemble_config or api_config.default_ensemble_config
+        
+        # Handle legacy prompt field (for backward compatibility)
+        if req.prompt is not None:
+            if isinstance(req.prompt, str):
+                # Single prompt
+                messages_input = [[Message(role="user", content=req.prompt)]]
+            else:
+                # List of prompts
+                messages_input = [[Message(role="user", content=p)] for p in req.prompt]
+        else:
+            # Use messages field
+            messages_input = req.messages
+        
+        # Auto-detect batch vs single request
+        is_batch = False
+        if messages_input and isinstance(messages_input[0], list):
+            # Batch request: List[List[Message]]
+            is_batch = True
+            conversations = messages_input
+        else:
+            # Single request: List[Message]
+            conversations = [messages_input]
+        
+        logger.info(f"Processing {'batch' if is_batch else 'single'} request with {len(conversations)} conversation(s)")
+        
+        # Process conversations
+        if len(conversations) == 1:
+            # Single conversation - process directly
+            try:
+                result = process_single_request(
+                    conversations[0], 
+                    ensemble_config,
+                    req.max_tokens,
+                    req.temperature,
+                    req.stop
+                )
+                results = [result]
+            except Exception as e:
+                logger.error(f"Error processing single request: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        else:
+            # Multiple conversations - process in parallel
+            def process_conversation(conv_with_index):
+                idx, conversation = conv_with_index
+                try:
+                    return idx, process_single_request(
+                        conversation,
+                        ensemble_config, 
+                        req.max_tokens,
+                        req.temperature,
+                        req.stop
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing conversation {idx}: {e}")
+                    return idx, {
+                        "content": f"Error: {str(e)}",
+                        "finish_reason": "error",
+                        "metadata": {"error": str(e)},
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0
+                    }
+            
+            with ThreadPoolExecutor(max_workers=min(len(conversations), 4)) as executor:
+                indexed_results = list(executor.map(process_conversation, enumerate(conversations)))
+            
+            # Sort results by original index
+            indexed_results.sort(key=lambda x: x[0])
+            results = [result for _, result in indexed_results]
+        
+        # Build response
+        choices = []
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        
+        for i, result in enumerate(results):
+            choices.append(ChatCompletionChoice(
+                index=i,
+                message=Message(role="assistant", content=result["content"]),
+                finish_reason=result["finish_reason"],
+                metadata=result.get("metadata")
+            ))
+            total_prompt_tokens += result["prompt_tokens"]
+            total_completion_tokens += result["completion_tokens"]
+        
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4()}",
+            object="chat.completion",
+            created=int(time.time()),
+            model=req.model,
+            choices=choices,
+            usage={
+                "prompt_tokens": total_prompt_tokens,
+                "completion_tokens": total_completion_tokens,
+                "total_tokens": total_prompt_tokens + total_completion_tokens
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in chat_completions: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/v1/ensemble/config")
 def update_config(
     model_specs: Optional[List[Dict[str, Any]]] = None,
     reward_spec: Optional[List[Dict[str, Any]]] = None,
-    default_ensemble_config: Optional[EnsembleMethodConfig] = None
+    default_ensemble_config: Optional[EnsembleConfig] = None
 ):
-    """Update ensemble configuration"""
+    """Update API configuration"""
     if model_specs is not None:
         api_config.model_specs = model_specs
         logger.info(f"Updated model_specs: {len(model_specs)} models")
@@ -191,253 +365,22 @@ def update_config(
     
     if default_ensemble_config is not None:
         api_config.default_ensemble_config = default_ensemble_config
-        logger.info(f"Updated default ensemble config")
+        logger.info("Updated default ensemble config")
     
-    return {"status": "updated", "config": get_config()}
+    return {
+        "status": "updated",
+        "model_count": len(api_config.model_specs),
+        "reward_count": len(api_config.reward_spec)
+    }
 
-@app.post("/v1/chat/completions")
-def chat_completions(req: ChatCompletionRequest):
-    """
-    OpenAI-compatible chat completion endpoint with ensemble support.
-    
-    Supports both legacy parameters and new ensemble configuration.
-    """
-    try:
-        # Determine ensemble configuration
-        if req.ensemble_config:
-            ensemble_config = req.ensemble_config
-        else:
-            # Use legacy parameters or defaults
-            ensemble_config = EnsembleMethodConfig(
-                model_selection_method=req.model_selection_method or api_config.default_ensemble_config.model_selection_method,
-                aggregation_method=req.ensemble_method or api_config.default_ensemble_config.aggregation_method,
-                use_model_selection=api_config.default_ensemble_config.use_model_selection,
-                use_output_aggregation=api_config.default_ensemble_config.use_output_aggregation
-            )
-        
-        # Handle prompt format
-        if isinstance(req.prompt, list):
-            prompt_text = " ".join(req.prompt)
-        else:
-            prompt_text = req.prompt
-        
-        # Create example for ensemble
-        example = {
-            "instruction": "You are a helpful assistant.",
-            "input": prompt_text,
-            "output": ""
-        }
-        
-        # Run ensemble inference
-        result = run_ensemble(
-            example=example,
-            model_specs=api_config.model_specs,
-            reward_spec=api_config.reward_spec,
-            ensemble_method=ensemble_config.aggregation_method,
-            model_selection_method=ensemble_config.model_selection_method,
-            max_tokens=req.max_tokens,
-            temperature=req.temperature
-        )
-        
-        output = result["output"]
-        
-        # Apply stop sequences
-        finish_reason = "length"
-        if req.stop:
-            for stop_seq in req.stop:
-                if stop_seq in output:
-                    output = output.split(stop_seq)[0]
-                    finish_reason = "stop"
-                    break
-        
-        # Apply max_tokens limit (approximate word count)
-        if len(output.split()) > req.max_tokens:
-            output = " ".join(output.split()[:req.max_tokens])
-            finish_reason = "length"
-        
-        return {
-            "id": f"cmpl-{uuid.uuid4()}",
-            "object": "text_completion", 
-            "created": int(time.time()),
-            "model": req.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "text": output,
-                    "finish_reason": finish_reason,
-                    "metadata": {
-                        "selected_models": result.get("selected_models", []),
-                        "method": result.get("method", "unknown"),
-                        "ensemble_config": ensemble_config.dict()
-                    }
-                }
-            ],
-            "usage": {
-                "prompt_tokens": len(prompt_text.split()),
-                "completion_tokens": len(output.split()),
-                "total_tokens": len(prompt_text.split()) + len(output.split())
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in chat_completions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/v1/ensemble/inference")
-def ensemble_inference(req: EnsembleRequest):
-    """
-    Direct ensemble inference with full configuration control.
-    
-    This endpoint provides direct access to the ensemble framework
-    with complete control over all parameters.
-    """
-    try:
-        # Create ensemble configuration
-        config = EnsembleConfig(
-            use_model_selection=req.ensemble_config.use_model_selection,
-            model_selection_method=req.ensemble_config.model_selection_method,
-            model_selection_params=req.ensemble_config.model_selection_params,
-            use_output_aggregation=req.ensemble_config.use_output_aggregation,
-            aggregation_method=req.ensemble_config.aggregation_method,
-            aggregation_level=req.ensemble_config.aggregation_level,
-            aggregation_params=req.ensemble_config.aggregation_params
-        )
-        
-        # Create ensemble framework
-        framework = EnsembleFramework(config)
-        
-        # Prepare example
-        example = {
-            "instruction": req.instruction,
-            "input": req.input,
-            "output": req.output
-        }
-        
-        # Run ensemble
-        result = framework.run_ensemble(
-            example=example,
-            model_specs=api_config.model_specs,
-            generators=api_config.generator_pool,
-            scorers=api_config.scorer_pool,
-            model_stats=api_config.model_stats,
-            max_rounds=req.max_rounds,
-            score_threshold=req.score_threshold,
-            max_tokens=req.max_tokens
-        )
-        
-        return {
-            "id": f"ensemble-{uuid.uuid4()}",
-            "created": int(time.time()),
-            "result": result,
-            "config": config.__dict__
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in ensemble_inference: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/v1/ensemble/batch")
-def batch_inference(req: BatchRequest):
-    """
-    Batch ensemble inference for processing multiple examples.
-    
-    Supports batch processing with configurable batch size.
-    """
-    try:
-        results = []
-        
-        # Process examples in batches
-        for i in range(0, len(req.examples), req.batch_size):
-            batch = req.examples[i:i + req.batch_size]
-            batch_results = []
-            
-            for example_req in batch:
-                try:
-                    # Use the ensemble_inference logic for each example
-                    result = ensemble_inference(example_req)
-                    batch_results.append(result)
-                except Exception as e:
-                    logger.error(f"Error processing example {i}: {e}")
-                    batch_results.append({
-                        "error": str(e),
-                        "example_index": i
-                    })
-            
-            results.extend(batch_results)
-        
-        return {
-            "id": f"batch-{uuid.uuid4()}",
-            "created": int(time.time()),
-            "total_examples": len(req.examples),
-            "batch_size": req.batch_size,
-            "results": results
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in batch_inference: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Factory methods for easy configuration
-@app.post("/v1/ensemble/presets/simple")
-def simple_ensemble(
-    prompt: str,
-    ensemble_method: str = "reward_based",
-    model_selection_method: str = "all",
-    max_tokens: int = 256
-):
-    """Preset: Simple ensemble with basic configuration"""
-    req = ChatCompletionRequest(
-        model="simple-ensemble",
-        prompt=prompt,
-        max_tokens=max_tokens,
-        ensemble_config=EnsembleMethodConfig(
-            model_selection_method=model_selection_method,
-            aggregation_method=ensemble_method,
-            use_model_selection=True,
-            use_output_aggregation=True
-        )
-    )
-    return chat_completions(req)
-
-@app.post("/v1/ensemble/presets/selection_only")
-def selection_only(
-    prompt: str,
-    model_selection_method: str = "zscore",
-    max_tokens: int = 256
-):
-    """Preset: Model selection only (no output aggregation)"""
-    req = ChatCompletionRequest(
-        model="selection-only",
-        prompt=prompt,
-        max_tokens=max_tokens,
-        ensemble_config=EnsembleMethodConfig(
-            model_selection_method=model_selection_method,
-            use_model_selection=True,
-            use_output_aggregation=False
-        )
-    )
-    return chat_completions(req)
-
-@app.post("/v1/ensemble/presets/aggregation_only")
-def aggregation_only(
-    prompt: str,
-    aggregation_method: str = "reward_based",
-    aggregation_level: str = "sentence",
-    max_tokens: int = 256
-):
-    """Preset: Output aggregation only (use all models)"""
-    req = ChatCompletionRequest(
-        model="aggregation-only",
-        prompt=prompt,
-        max_tokens=max_tokens,
-        ensemble_config=EnsembleMethodConfig(
-            aggregation_method=aggregation_method,
-            aggregation_level=aggregation_level,
-            use_model_selection=False,
-            use_output_aggregation=True
-        )
-    )
-    return chat_completions(req)
+@app.get("/v1/ensemble/config")
+def get_config():
+    """Get current API configuration"""
+    return {
+        "model_specs": api_config.model_specs,
+        "reward_spec": api_config.reward_spec,
+        "default_ensemble_config": api_config.default_ensemble_config.model_dump()
+    }
 
 if __name__ == "__main__":
     import uvicorn
