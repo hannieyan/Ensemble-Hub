@@ -156,20 +156,14 @@ class HFGenerator(BaseGenerator):
             self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
         ]
 
-        if "qwen3" in self.name.lower():
+        if "Qwen3" in self.name:
+            data_args = DataArguments(template="qwen3")
+            self.indent = 2
+        elif "Qwen2.5" in self.name:
             data_args = DataArguments(template="qwen")
             self.indent = 2
-        elif "qwen2.5" in self.name.lower():
-            data_args = DataArguments(template="qwen")
-            self.indent = 2
-        elif "qwen" in self.name.lower():
-            data_args = DataArguments(template="qwen")
-            self.indent = 2
-        elif "deepseek-r1" in self.name.lower():
+        elif "DeepSeek-R1" in self.name:
             data_args = DataArguments(template="deepseekr1")
-            self.indent = 1
-        elif "deepseek" in self.name.lower():
-            data_args = DataArguments(template="deepseek3")
             self.indent = 1
         else:
             logger.warning(f"Unknown model template for {self.name}, using default")
@@ -207,6 +201,10 @@ class HFGenerator(BaseGenerator):
         stop_strings: Optional[Union[str, List[str]]] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
 
+        # Handle string input by converting to dict format
+        if isinstance(dicts, str):
+            dicts = {"instruction": "", "input": dicts, "output": ""}
+        
         converted = self.converter(dicts)
         prompt_msgs = converted["_prompt"]
         response_msgs = converted["_response"]
@@ -253,7 +251,7 @@ class HFGenerator(BaseGenerator):
     @torch.inference_mode()
     def batch_generate(
         self,
-        dicts_list: List[dict],
+        dicts_list: List[Union[dict, str]],
         *,
         enable_thinking: bool = False,
         max_tokens=256,
@@ -269,6 +267,10 @@ class HFGenerator(BaseGenerator):
         # Process all inputs to get prompts
         all_prompt_texts = []
         for single_dict in dicts_list:
+            # Handle string input by converting to dict format
+            if isinstance(single_dict, str):
+                single_dict = {"instruction": "", "input": single_dict, "output": ""}
+                
             converted = self.converter(single_dict)
             prompt_msgs = converted["_prompt"]
             response_msgs = converted["_response"]
