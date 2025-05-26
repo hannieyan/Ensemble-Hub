@@ -171,14 +171,16 @@ def run_ensemble(
     }
     aggregation_method = method_mapping.get(ensemble_method, ensemble_method)
     
-    # Handle progressive-specific parameters
-    aggregation_params = {"max_rounds": max_rounds, "score_threshold": score_threshold}
+    # Handle progressive-specific parameters (only constructor params, not runtime params)
+    aggregation_params = {}
     if ensemble_method == "progressive":
         aggregation_params.update({
             "switch_mode": progressive_mode,
             "length_thresholds": length_thresholds or [1000, 2000, 3000],
             "special_tokens": special_tokens or [r"<\think>"]
         })
+    
+    # Note: max_rounds and score_threshold are runtime parameters, not constructor parameters
     
     # Create ensemble framework
     config = EnsembleConfig(

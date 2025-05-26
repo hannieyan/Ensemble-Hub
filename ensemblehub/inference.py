@@ -220,8 +220,8 @@ def main():
 
     # Model configuration - Both Qwen models available for progressive inference
     model_specs = [
-        {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "cpu"},  # Larger model
-        {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "cpu"},  # Smaller model
+        {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "vllm", "device": "cpu"},  # Larger model
+        {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "vllm", "device": "cpu"},  # Smaller model
         # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf", "device": "cuda:1"},
         # {"path": "Qwen/Qwen3-4B",                             "engine": "hf", "device": "cuda:2"},
         # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf", "device": "cuda:6"},

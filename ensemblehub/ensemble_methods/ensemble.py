@@ -132,6 +132,11 @@ class EnsembleFramework:
                 for key in ["switch_mode", "length_thresholds", "special_tokens", "max_repeat", "name"]:
                     if key in self.config.aggregation_params:
                         constructor_params[key] = self.config.aggregation_params[key]
+            elif aggregator_class.__name__ in ["RandomSentenceSelector", "RoundRobinSelector"]:
+                # These only accept max_repeat and name
+                for key in ["max_repeat", "name"]:
+                    if key in self.config.aggregation_params:
+                        constructor_params[key] = self.config.aggregation_params[key]
             else:
                 constructor_params = self.config.aggregation_params
                 

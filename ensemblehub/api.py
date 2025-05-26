@@ -52,7 +52,7 @@ class ChatCompletionRequest(BaseModel):
     
     # Core OpenAI-compatible fields
     model: str = Field(default="ensemble", description="Model identifier")
-    messages: Union[List[Message], List[List[Message]]] = Field(..., description="Single conversation or list of conversations")
+    messages: Optional[Union[List[Message], List[List[Message]]]] = Field(default=None, description="Single conversation or list of conversations")
     
     # Generation parameters
     max_tokens: int = Field(default=256, description="Maximum tokens to generate")
@@ -67,7 +67,8 @@ class ChatCompletionRequest(BaseModel):
 
 class ChatCompletionChoice(BaseModel):
     index: int
-    message: Message
+    message: Optional[Message] = None  # For chat completions
+    text: Optional[str] = None  # For text completions (lm-eval compatibility)
     finish_reason: str
     metadata: Optional[Dict[str, Any]] = None
 
@@ -246,13 +247,17 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         # Use provided config or default
         ensemble_config = req.ensemble_config or api_config.default_ensemble_config
         
+        # Validate input: must have either prompt or messages
+        if req.prompt is None and req.messages is None:
+            raise HTTPException(status_code=422, detail="Either 'prompt' or 'messages' field is required")
+        
         # Handle legacy prompt field (for backward compatibility)
         if req.prompt is not None:
             if isinstance(req.prompt, str):
                 # Single prompt
-                messages_input = [[Message(role="user", content=req.prompt)]]
+                messages_input = [Message(role="user", content=req.prompt)]
             else:
-                # List of prompts
+                # List of prompts - treat as batch
                 messages_input = [[Message(role="user", content=p)] for p in req.prompt]
         else:
             # Use messages field
@@ -260,13 +265,20 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         
         # Auto-detect batch vs single request
         is_batch = False
-        if messages_input and isinstance(messages_input[0], list):
-            # Batch request: List[List[Message]]
-            is_batch = True
-            conversations = messages_input
+        if messages_input and len(messages_input) > 0:
+            # Check if first element is a list (batch) or Message (single)
+            if isinstance(messages_input[0], list):
+                # Batch request: List[List[Message]]
+                is_batch = True
+                conversations = messages_input
+            elif isinstance(messages_input[0], Message):
+                # Single request: List[Message]
+                conversations = [messages_input]
+            else:
+                # This shouldn't happen but handle gracefully
+                raise HTTPException(status_code=422, detail="Invalid message format")
         else:
-            # Single request: List[Message]
-            conversations = [messages_input]
+            raise HTTPException(status_code=422, detail="Empty messages")
         
         logger.info(f"Processing {'batch' if is_batch else 'single'} request with {len(conversations)} conversation(s)")
         
@@ -320,18 +332,32 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         total_completion_tokens = 0
         
         for i, result in enumerate(results):
-            choices.append(ChatCompletionChoice(
+            # Support both chat completion and text completion formats
+            choice = ChatCompletionChoice(
                 index=i,
-                message=Message(role="assistant", content=result["content"]),
                 finish_reason=result["finish_reason"],
                 metadata=result.get("metadata")
-            ))
+            )
+            
+            # For lm-evaluation-harness compatibility (text completions)
+            if req.prompt is not None:
+                choice.text = result["content"]
+                choice.message = None
+            else:
+                # Standard chat completion format
+                choice.message = Message(role="assistant", content=result["content"])
+                choice.text = None
+            
+            choices.append(choice)
             total_prompt_tokens += result["prompt_tokens"]
             total_completion_tokens += result["completion_tokens"]
         
+        # Determine response object type
+        object_type = "text_completion" if req.prompt is not None else "chat.completion"
+        
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4()}",
-            object="chat.completion",
+            object=object_type,
             created=int(time.time()),
             model=req.model,
             choices=choices,
