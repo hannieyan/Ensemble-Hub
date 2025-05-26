@@ -408,6 +408,32 @@ captures_underway.empty() INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachi
    python -m ensemblehub.api
    ```
 
+### vLLM 层名称冲突错误
+
+如果你在使用 vLLM 引擎时遇到以下错误：
+```
+Duplicate layer name: model.layers.X.self_attn.attn
+```
+
+**解决方案：**
+
+1. **使用额外的 vLLM 修复参数（推荐）：**
+   ```bash
+   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill \
+     --vllm_disable_sliding_window --vllm_max_model_len 32768
+   ```
+
+2. **切换到 HuggingFace 引擎（最可靠）：**
+   ```bash
+   # 将模型配置从 "engine": "vllm" 改为 "engine": "hf" 
+   python -m ensemblehub.api --model_specs 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B:hf:cuda:0'
+   ```
+
+3. **减少 GPU 内存使用：**
+   ```bash
+   python -m ensemblehub.api --vllm_gpu_memory_utilization 0.6 --vllm_max_model_len 16384
+   ```
+
 ### HuggingFace Meta Tensor 错误
 
 如果你在使用 HuggingFace 引擎时遇到以下错误：

@@ -94,12 +94,12 @@ class APIConfig:
         self.model_specs = [
             # {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
             # {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Smaller model
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:1"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:0"},
             # {"path": "Qwen/Qwen3-4B",                             "engine": "hf",   "device": "cuda:2"},
             # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf",   "device": "cuda:6"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:4"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:5"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:5"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:1"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:2"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:3"},
         ]
         
         # Default reward specifications
@@ -533,6 +533,12 @@ if __name__ == "__main__":
                        help="Disable CUDA graphs in vLLM (fixes memory allocation errors)")
     parser.add_argument("--vllm_disable_chunked_prefill", action="store_true", 
                        help="Disable chunked prefill in vLLM (fixes conflicts)")
+    parser.add_argument("--vllm_max_model_len", type=int, default=32768,
+                       help="Maximum model length for vLLM (default: 32768, reduces OOM)")
+    parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.8,
+                       help="GPU memory utilization for vLLM (default: 0.8)")
+    parser.add_argument("--vllm_disable_sliding_window", action="store_true",
+                       help="Disable sliding window attention (fixes layer name conflicts)")
     
     # HuggingFace specific options
     parser.add_argument("--hf_use_eager_attention", action="store_true", default=True,

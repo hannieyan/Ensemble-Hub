@@ -388,7 +388,7 @@ class VLLMGenerator(BaseGenerator):
         if not _VLLM_AVAILABLE:
             raise RuntimeError("vLLM is not installed. Please install with: pip install vllm")
         
-        # Default vLLM engine parameters with CUDA graph fixes
+        # Default vLLM engine parameters with comprehensive fixes
         engine_args = {
             "model": path,
             "trust_remote_code": True,
@@ -397,6 +397,10 @@ class VLLMGenerator(BaseGenerator):
             "disable_custom_all_reduce": True,
             "enforce_eager": True,  # Disable CUDA graphs to avoid memory allocation errors
             "enable_chunked_prefill": False,  # Disable chunked prefill that can cause conflicts
+            "max_model_len": 32768,  # Reduce context length to avoid OOM and conflicts
+            "gpu_memory_utilization": 0.8,  # Conservative memory usage
+            "swap_space": 0,  # Disable CPU swap to avoid conflicts
+            "disable_sliding_window": True,  # Disable sliding window attention
         }
         engine_args.update(vllm_kwargs)
         
