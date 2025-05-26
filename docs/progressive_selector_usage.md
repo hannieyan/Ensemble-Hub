@@ -38,14 +38,14 @@ Switch models based on specific tokens, suitable for structured reasoning.
 # Create token-based switching selector
 selector = ProgressiveSelector(
     switch_mode="token",
-    special_tokens=[r"<think>", r"<analyze>", r"<conclude>"],
+    special_tokens=[r"<\think>", r"<\analyze>", r"<\conclude>"],
     name="TokenBasedSelector"
 )
 
 # Usage:
-# - Model 0 reasons until first <think>
-# - Model 1 reasons until first <analyze> 
-# - Model 2 reasons until first <conclude>
+# - Model 0 reasons until first <\think>
+# - Model 1 reasons until first <\analyze> 
+# - Model 2 reasons until first <\conclude>
 # - After that, stick with the last model for remaining inference
 ```
 
@@ -55,12 +55,12 @@ selector = ProgressiveSelector(
 # Switch only once when encountering <think>
 selector = ProgressiveSelector(
     switch_mode="token",
-    special_tokens=[r"<think>"],  # Only one token
+    special_tokens=[r"<\think>"],  # Only one token
     name="SingleSwitchSelector"
 )
 
 # Usage:
-# - Model 0 reasons until <think>
+# - Model 0 reasons until <\think>
 # - Model 1 continues with remaining inference
 ```
 
@@ -158,6 +158,6 @@ python -m ensemblehub.inference \
     --output_path output/progressive_token.jsonl \
     --ensemble_method progressive \
     --progressive_mode token \
-    --special_tokens "<\\think>,<\\analyze>" \
+    --special_tokens "<\think>,<\analyze>" \
     --max_rounds 8
 ```
