@@ -25,10 +25,19 @@ from llamafactory.data.parser import DatasetAttr
 # Optional vLLM backend -----------------------------------------------------
 try:
     from vllm import LLM, SamplingParams  # type: ignore
+    try:
+        from vllm.distributed.parallel_state import destroy_model_parallel
+    except ImportError:
+        # Fallback for older vLLM versions
+        try:
+            from vllm.model_executor.parallel_utils.parallel_state import destroy_model_parallel
+        except ImportError:
+            destroy_model_parallel = None
 
     _VLLM_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _VLLM_AVAILABLE = False
+    destroy_model_parallel = None
 
 EOS_TEXT = ""  # Most Qwen / Llama models use empty string as EOS
 STOP_TOKENS_TEXT = {"\n"}  # Stop decoding after these tokens
@@ -429,14 +438,19 @@ class VLLMGenerator(BaseGenerator):
             # 移除有问题的参数，使用 vLLM 默认设置
         }
         
-        # 如果指定了特定设备，设置 GPU 可见性
+        # Store original device for cleanup
+        self._original_device = device
+        
+        # 如果指定了特定设备，通过环境变量设置
+        import os
+        original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        self._original_cuda_devices = original_cuda_devices
+        
         if device.startswith("cuda:"):
             device_id = int(device.split(":")[1])
-            # 通过 tensor_parallel_size 和 GPU 选择来控制设备
-            import os
-            # Set device through environment variable before vLLM initialization
+            # vLLM will use the first visible device, so we set only the target device
             os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
-            logger.info(f"Setting CUDA_VISIBLE_DEVICES={device_id} for vLLM")
+            logger.info(f"Setting CUDA_VISIBLE_DEVICES={device_id} for vLLM model {path}")
         
         # 更新用户自定义参数
         engine_args.update(vllm_kwargs)
@@ -492,6 +506,34 @@ class VLLMGenerator(BaseGenerator):
 
         self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=data_args)
         self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
+    
+    def cleanup(self):
+        """Clean up vLLM resources and restore environment"""
+        if hasattr(self, '_llm'):
+            # Destroy model parallel if available
+            if destroy_model_parallel is not None:
+                try:
+                    destroy_model_parallel()
+                except Exception as e:
+                    logger.warning(f"Failed to destroy model parallel: {e}")
+            
+            # Delete the LLM instance
+            del self._llm
+            
+            # Clean up CUDA cache
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        
+        # Restore original CUDA_VISIBLE_DEVICES
+        if hasattr(self, '_original_cuda_devices'):
+            import os
+            if self._original_cuda_devices:
+                os.environ["CUDA_VISIBLE_DEVICES"] = self._original_cuda_devices
+            else:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
     def _dict_to_prompt(self, example_dict: dict) -> str:
         """Convert dict format to prompt string."""
@@ -568,21 +610,21 @@ class VLLMGenerator(BaseGenerator):
 # ---------------------------------------------------------------------------
 
 class GeneratorPool:
-    _gen_cache: Dict[Tuple[str, str, str], BaseGenerator] = {}
+    _gen_cache: Dict[Tuple[str, str, str, str], BaseGenerator] = {}  # (engine, path, quantization, device)
     _reward_cache: Dict[str, str] = {}
     _vllm_lock = threading.Lock()  # Lock for vLLM initialization
+    _vllm_instances = {}  # Track active vLLM instances by device
 
     @classmethod
     def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none") -> BaseGenerator:
         """
         Load a generator model (e.g., HF or vLLM) to a specified device (e.g., 'cuda:0', 'cpu').
         """
-        key = (engine, path, quantization)  # Include quantization in cache key
+        resolved_device = device or "auto"
+        key = (engine, path, quantization, resolved_device)  # Include device in cache key
+        
         if key not in cls._gen_cache:
-            logger.info("[Pool] loading %s (%s) with quantization=%s", path, engine, quantization)
-
-            resolved_device = device or "auto"
-            logger.info(f"→ Assigned to device: {resolved_device}")
+            logger.info("[Pool] loading %s (%s) with quantization=%s on device=%s", path, engine, quantization, resolved_device)
 
             if engine == "hf":
                 cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization)
@@ -591,9 +633,20 @@ class GeneratorPool:
                 with cls._vllm_lock:
                     # Double-check if another thread already initialized it
                     if key not in cls._gen_cache:
-                        # Add a small delay to help avoid CUDA conflicts
-                        time.sleep(0.5)
-                        cls._gen_cache[key] = VLLMGenerator(path, device=resolved_device)
+                        # Check if there's already a vLLM instance on this device
+                        if resolved_device in cls._vllm_instances:
+                            logger.warning(f"vLLM instance already exists on {resolved_device}, cleaning up...")
+                            old_instance = cls._vllm_instances[resolved_device]
+                            if hasattr(old_instance, 'cleanup'):
+                                old_instance.cleanup()
+                            del cls._vllm_instances[resolved_device]
+                            # Wait for cleanup to complete
+                            time.sleep(1.0)
+                        
+                        # Create new instance
+                        instance = VLLMGenerator(path, device=resolved_device)
+                        cls._gen_cache[key] = instance
+                        cls._vllm_instances[resolved_device] = instance
             else:
                 raise ValueError(f"Unknown engine: {engine}")
         return cls._gen_cache[key]
