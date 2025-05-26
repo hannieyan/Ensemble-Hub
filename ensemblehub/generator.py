@@ -416,24 +416,32 @@ class HFGenerator(BaseGenerator):
 # ---------------------------------------------------------------------------
 
 class VLLMGenerator(BaseGenerator):
-    def __init__(self, path: str, **vllm_kwargs):
+    def __init__(self, path: str, device: str = "cuda:0", **vllm_kwargs):
         if not _VLLM_AVAILABLE:
             raise RuntimeError("vLLM is not installed. Please install with: pip install vllm")
         
-        # Default vLLM engine parameters with comprehensive fixes
+        # 借鉴 LlamaFactory 的成功配置，适配单卡大模型
         engine_args = {
             "model": path,
             "trust_remote_code": True,
-            "tensor_parallel_size": 1,
+            "dtype": "bfloat16",  # 使用 bfloat16 节省内存
+            "max_model_len": 4096,  # 适中的context长度，避免OOM
+            "tensor_parallel_size": 1,  # 单卡推理
             "disable_log_stats": True,
-            "disable_custom_all_reduce": True,
-            "enforce_eager": True,  # Disable CUDA graphs to avoid memory allocation errors
-            "enable_chunked_prefill": False,  # Disable chunked prefill that can cause conflicts
-            "max_model_len": 32768,  # Reduce context length to avoid OOM and conflicts
-            "gpu_memory_utilization": 0.8,  # Conservative memory usage
-            "swap_space": 0,  # Disable CPU swap to avoid conflicts
-            "disable_sliding_window": True,  # Disable sliding window attention
+            # 移除有问题的参数，使用 vLLM 默认设置
         }
+        
+        # 如果指定了特定设备，设置 GPU 可见性
+        if device.startswith("cuda:"):
+            device_id = int(device.split(":")[1])
+            # 通过 tensor_parallel_size 和 GPU 选择来控制设备
+            import os
+            current_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+            if not current_cuda_devices:
+                # 只在没有设置的情况下设置
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+        
+        # 更新用户自定义参数
         engine_args.update(vllm_kwargs)
         
         self._llm = LLM(**engine_args)
@@ -570,7 +578,7 @@ class GeneratorPool:
             if engine == "hf":
                 cls._gen_cache[key] = HFGenerator(path, device=resolved_device)
             elif engine == "vllm":
-                cls._gen_cache[key] = VLLMGenerator(path)  # vLLM usually uses global config
+                cls._gen_cache[key] = VLLMGenerator(path, device=resolved_device)
             else:
                 raise ValueError(f"Unknown engine: {engine}")
         return cls._gen_cache[key]

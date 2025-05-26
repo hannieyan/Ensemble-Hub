@@ -417,21 +417,23 @@ Duplicate layer name: model.layers.X.self_attn.attn
 
 **解决方案：**
 
-1. **使用额外的 vLLM 修复参数（推荐）：**
+1. **使用优化的 vLLM 配置（推荐）：**
    ```bash
-   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill \
-     --vllm_disable_sliding_window --vllm_max_model_len 32768
+   # 使用 LlamaFactory 风格的配置，适合单卡大模型
+   python -m ensemblehub.api --ensemble_method random --model_selection_method all
    ```
 
-2. **切换到 HuggingFace 引擎（最可靠）：**
+2. **切换到 HuggingFace 引擎（最稳定）：**
    ```bash
    # 将模型配置从 "engine": "vllm" 改为 "engine": "hf" 
    python -m ensemblehub.api --model_specs 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B:hf:cuda:0'
    ```
 
-3. **减少 GPU 内存使用：**
+3. **调试模式设置：**
    ```bash
-   python -m ensemblehub.api --vllm_gpu_memory_utilization 0.6 --vllm_max_model_len 16384
+   # 如果仍有问题，使用调试模式启动
+   export CUDA_LAUNCH_BLOCKING=1
+   python -m ensemblehub.api --ensemble_method random
    ```
 
 ### HuggingFace Meta Tensor 错误
