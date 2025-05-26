@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -423,6 +425,7 @@ class VLLMGenerator(BaseGenerator):
             "max_model_len": 4096,  # 适中的context长度，避免OOM
             "tensor_parallel_size": 1,  # 单卡推理
             "disable_log_stats": True,
+            "enforce_eager": True,  # Disable CUDA graphs to avoid caching allocator issues
             # 移除有问题的参数，使用 vLLM 默认设置
         }
         
@@ -431,15 +434,25 @@ class VLLMGenerator(BaseGenerator):
             device_id = int(device.split(":")[1])
             # 通过 tensor_parallel_size 和 GPU 选择来控制设备
             import os
-            current_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-            if not current_cuda_devices:
-                # 只在没有设置的情况下设置
-                os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+            # Set device through environment variable before vLLM initialization
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+            logger.info(f"Setting CUDA_VISIBLE_DEVICES={device_id} for vLLM")
         
         # 更新用户自定义参数
         engine_args.update(vllm_kwargs)
         
-        self._llm = LLM(**engine_args)
+        try:
+            self._llm = LLM(**engine_args)
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "captures_underway" in str(e):
+                logger.error(f"CUDA initialization error for vLLM. This often happens with concurrent initialization. Error: {e}")
+                # Try to clean up CUDA cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                raise RuntimeError(f"Failed to initialize vLLM for {path}. Try initializing models sequentially.") from e
+            else:
+                raise
         self._sp = SamplingParams(
             max_tokens=256,
             temperature=0.95, 
@@ -557,6 +570,7 @@ class VLLMGenerator(BaseGenerator):
 class GeneratorPool:
     _gen_cache: Dict[Tuple[str, str, str], BaseGenerator] = {}
     _reward_cache: Dict[str, str] = {}
+    _vllm_lock = threading.Lock()  # Lock for vLLM initialization
 
     @classmethod
     def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none") -> BaseGenerator:
@@ -573,7 +587,13 @@ class GeneratorPool:
             if engine == "hf":
                 cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization)
             elif engine == "vllm":
-                cls._gen_cache[key] = VLLMGenerator(path, device=resolved_device)
+                # Use lock to prevent concurrent vLLM initialization
+                with cls._vllm_lock:
+                    # Double-check if another thread already initialized it
+                    if key not in cls._gen_cache:
+                        # Add a small delay to help avoid CUDA conflicts
+                        time.sleep(0.5)
+                        cls._gen_cache[key] = VLLMGenerator(path, device=resolved_device)
             else:
                 raise ValueError(f"Unknown engine: {engine}")
         return cls._gen_cache[key]
