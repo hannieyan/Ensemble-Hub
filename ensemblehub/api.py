@@ -450,7 +450,9 @@ def create_app_with_config(
     max_rounds: int = 500,
     score_threshold: float = -2.0,
     show_attribution: bool = False,
-    model_specs: str = None
+    model_specs: str = None,
+    hf_use_8bit: bool = False,
+    hf_use_4bit: bool = False
 ) -> FastAPI:
     """Create FastAPI app with custom ensemble configuration"""
     
@@ -485,6 +487,14 @@ def create_app_with_config(
                 })
         if models:
             api_config.model_specs = models
+    
+    # Apply quantization settings to HF models
+    if hf_use_8bit or hf_use_4bit:
+        quantization = "8bit" if hf_use_8bit else "4bit"
+        for spec in api_config.model_specs:
+            if spec.get("engine") == "hf":
+                spec["quantization"] = quantization
+                logger.info(f"Applying {quantization} quantization to {spec['path']}")
     
     logger.info(f"API initialized with:")
     logger.info(f"  Model selection: {model_selection_method}")
@@ -564,7 +574,9 @@ if __name__ == "__main__":
         max_rounds=args.max_rounds,
         score_threshold=args.score_threshold,
         show_attribution=args.show_attribution,
-        model_specs=args.model_specs
+        model_specs=args.model_specs,
+        hf_use_8bit=args.hf_use_8bit,
+        hf_use_4bit=args.hf_use_4bit
     )
     
     uvicorn.run(app_configured, host=args.host, port=args.port)
