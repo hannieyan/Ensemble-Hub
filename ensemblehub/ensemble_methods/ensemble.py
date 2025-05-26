@@ -23,6 +23,7 @@ from .model_selection.learned import LLMBlenderSelector, MetaLearningSelector
 from .output_aggregation.sentence_level.reward_based import RewardBasedSelector
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
 from .output_aggregation.sentence_level.round_robin import RoundRobinSelector
+from .output_aggregation.sentence_level.progressive_selector import ProgressiveSelector
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 from .output_aggregation.response_level.base import BaseResponseAggregator
@@ -69,6 +70,7 @@ class EnsembleFramework:
         "reward_based": RewardBasedSelector,
         "random": RandomSentenceSelector,
         "round_robin": RoundRobinSelector,
+        "progressive": ProgressiveSelector,
     }
     
     TOKEN_AGGREGATORS = {
