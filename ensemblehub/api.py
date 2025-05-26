@@ -92,17 +92,29 @@ class APIConfig:
     def __init__(self):
         # Default model specifications
         self.model_specs = [
-            {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "cpu"},
-            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "cpu"},
+            # {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
+            # {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Smaller model
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:1"},
+            # {"path": "Qwen/Qwen3-4B",                             "engine": "hf",   "device": "cuda:2"},
+            # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf",   "device": "cuda:6"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:4"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:5"},
+            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:5"},
         ]
         
         # Default reward specifications
-        self.reward_spec = [
-            # Add your reward models here
+        self.    reward_spec = [
+            # {"path": "Qwen/Qwen2.5-Math-PRM-7B",                  "engine": "hf_rm",  "device": "cuda:0", "weight": 0.2},
+            # {"path": "http://localhost:8000/v1/score/evaluation", "engine": "api",                        "weight": 0.4},
+            # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf_gen", "device": "cuda:0", "weight": 1.0},
         ]
         
         # Default ensemble configuration
-        self.default_ensemble_config = EnsembleConfig()
+        self.default_ensemble_config = EnsembleConfig(
+            ensemble_method="loop",  # Use round-robin for cycling
+            model_selection_method="all",  # No model selection, use all models
+            show_attribution=True
+        )
         
         # Initialize pools
         self.generator_pool = GeneratorPool()
@@ -408,6 +420,127 @@ def get_config():
         "default_ensemble_config": api_config.default_ensemble_config.model_dump()
     }
 
+@app.post("/v1/loop/completions")  
+def loop_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
+    """
+    Dedicated endpoint for loop (round-robin) ensemble without model selection.
+    This endpoint forces the use of round-robin cycling through all available models.
+    """
+    # Override ensemble config for loop inference
+    loop_config = EnsembleConfig(
+        ensemble_method="loop",
+        model_selection_method="all",  # Use all models, no selection
+        show_attribution=True,
+        max_rounds=req.ensemble_config.max_rounds if req.ensemble_config else 500,
+        score_threshold=req.ensemble_config.score_threshold if req.ensemble_config else -2.0
+    )
+    
+    # Replace the request's ensemble config
+    req.ensemble_config = loop_config
+    
+    # Use the main chat completions handler
+    return chat_completions(req)
+
+def create_app_with_config(
+    model_selection_method: str = "all",
+    ensemble_method: str = "simple", 
+    progressive_mode: str = "length",
+    length_thresholds: str = "1000,2000,3000",
+    special_tokens: str = r"<\think>",
+    max_rounds: int = 500,
+    score_threshold: float = -2.0,
+    show_attribution: bool = False,
+    model_specs: str = None
+) -> FastAPI:
+    """Create FastAPI app with custom ensemble configuration"""
+    
+    # Parse parameters
+    length_threshold_list = [int(x.strip()) for x in length_thresholds.split(",")] if length_thresholds else [1000, 2000, 3000]
+    special_token_list = [x.strip() for x in special_tokens.split(",")] if special_tokens else [r"<\think>"]
+    
+    # Update global config
+    api_config.default_ensemble_config = EnsembleConfig(
+        model_selection_method=model_selection_method,
+        ensemble_method=ensemble_method,
+        progressive_mode=progressive_mode,
+        length_thresholds=length_threshold_list,
+        special_tokens=special_token_list,
+        max_rounds=max_rounds,
+        score_threshold=score_threshold,
+        show_attribution=show_attribution
+    )
+    
+    # Update model specs if provided
+    if model_specs:
+        # Parse model specs from string format
+        # Expected format: "model1:engine:device,model2:engine:device"
+        models = []
+        for spec in model_specs.split(","):
+            parts = spec.strip().split(":")
+            if len(parts) >= 2:
+                models.append({
+                    "path": parts[0],
+                    "engine": parts[1],
+                    "device": parts[2] if len(parts) > 2 else "cpu"
+                })
+        if models:
+            api_config.model_specs = models
+    
+    logger.info(f"API initialized with:")
+    logger.info(f"  Model selection: {model_selection_method}")
+    logger.info(f"  Ensemble method: {ensemble_method}")
+    logger.info(f"  Max rounds: {max_rounds}")
+    logger.info(f"  Show attribution: {show_attribution}")
+    logger.info(f"  Models: {len(api_config.model_specs)}")
+    
+    return app
+
 if __name__ == "__main__":
+    import argparse
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    parser = argparse.ArgumentParser(description="Ensemble-Hub API Server")
+    
+    # Server configuration
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to (default: 8000)")
+    
+    # Ensemble configuration
+    parser.add_argument("--model_selection_method", type=str, default="all", 
+                       choices=["zscore", "all", "random"],
+                       help="Model selection method (default: all)")
+    parser.add_argument("--ensemble_method", type=str, default="simple",
+                       choices=["simple", "progressive", "random", "loop"],
+                       help="Ensemble method (default: simple)")
+    parser.add_argument("--progressive_mode", type=str, default="length",
+                       choices=["length", "token"],
+                       help="Progressive mode for progressive ensemble (default: length)")
+    parser.add_argument("--length_thresholds", type=str, default="1000,2000,3000",
+                       help="Length thresholds for progressive mode (comma-separated, default: 1000,2000,3000)")
+    parser.add_argument("--special_tokens", type=str, default=r"<\think>",
+                       help=r"Special tokens for progressive mode (comma-separated, default: <\think>)")
+    parser.add_argument("--max_rounds", type=int, default=500,
+                       help="Maximum generation rounds (default: 500)")
+    parser.add_argument("--score_threshold", type=float, default=-2.0,
+                       help="Score threshold for early stopping (default: -2.0)")
+    parser.add_argument("--show_attribution", action="store_true",
+                       help="Show model attribution by default")
+    parser.add_argument("--model_specs", type=str, default=None,
+                       help="Model specifications in format 'model1:engine:device,model2:engine:device'")
+    
+    args = parser.parse_args()
+    
+    # Create app with configuration
+    app_configured = create_app_with_config(
+        model_selection_method=args.model_selection_method,
+        ensemble_method=args.ensemble_method,
+        progressive_mode=args.progressive_mode,
+        length_thresholds=args.length_thresholds,
+        special_tokens=args.special_tokens,
+        max_rounds=args.max_rounds,
+        score_threshold=args.score_threshold,
+        show_attribution=args.show_attribution,
+        model_specs=args.model_specs
+    )
+    
+    uvicorn.run(app_configured, host=args.host, port=args.port)

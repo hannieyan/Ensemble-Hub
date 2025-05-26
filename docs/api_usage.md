@@ -4,13 +4,85 @@ Enhanced API v2.0 支持灵活的集成方法选择和配置。
 
 ## 🚀 启动 API 服务器
 
+### 基础启动
 ```bash
-# 在项目根目录下
+# 使用默认配置在项目根目录下启动
 python ensemblehub/api.py
 
-# 或使用 uvicorn
+# 或使用 uvicorn（仅支持服务器配置，不支持集成方法配置）
 uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
 ```
+
+### 命令行配置启动
+**注意：集成方法配置仅在使用 `python ensemblehub/api.py` 启动时有效，uvicorn 启动方式不支持这些自定义参数。**
+
+```bash
+# 配置服务器地址和端口
+python ensemblehub/api.py --host 0.0.0.0 --port 8080
+
+# 配置模型选择和集成方法
+python ensemblehub/api.py --model_selection_method zscore --ensemble_method progressive
+
+# 配置循环推理（不使用模型选择）
+python ensemblehub/api.py --model_selection_method all --ensemble_method loop --max_rounds 5
+
+# 配置渐进式集成
+python ensemblehub/api.py --ensemble_method progressive --progressive_mode length \
+  --length_thresholds 50,100,200 --max_rounds 3
+
+# 配置随机选择集成
+python ensemblehub/api.py --model_selection_method all --ensemble_method random --max_rounds 3
+
+# 配置循环选择集成（轮询模式）
+python ensemblehub/api.py --model_selection_method all --ensemble_method loop \
+  --max_rounds 5 --max_repeat 2
+
+# 配置自定义模型
+python ensemblehub/api.py --model_specs '[{"path":"model1","engine":"hf"},{"path":"model2","engine":"hf"}]'
+
+# 完整配置示例
+python ensemblehub/api.py \
+  --host 0.0.0.0 --port 8080 \
+  --model_selection_method zscore \
+  --ensemble_method progressive \
+  --progressive_mode mixed \
+  --length_thresholds 100,200 \
+  --special_tokens "<step>,<think>" \
+  --max_rounds 5 \
+  --score_threshold -2.0 \
+  --max_repeat 3
+```
+
+### 可用的命令行参数
+
+#### 服务器配置
+- `--host`: 服务器主机地址 (默认: 127.0.0.1)
+- `--port`: 服务器端口 (默认: 8000)
+
+#### 集成配置
+- `--model_selection_method`: 模型选择方法
+  - `zscore`: 基于 Z-score 的统计选择 (默认)
+  - `all`: 使用所有模型
+  - `random`: 随机选择模型
+- `--ensemble_method`: 集成方法
+  - `simple`: 简单奖励模型集成 (默认)
+  - `progressive`: 渐进式集成
+  - `random`: 随机集成
+  - `loop`: 循环/轮询集成
+- `--max_rounds`: 最大推理轮数 (默认: 10)
+- `--score_threshold`: 分数阈值 (默认: -1.5)
+- `--max_repeat`: 最大重复次数 (默认: 3)
+
+#### 渐进式集成特定配置
+- `--progressive_mode`: 渐进模式
+  - `length`: 基于长度的模型切换
+  - `token`: 基于特殊令牌的模型切换
+  - `mixed`: 混合模式 (默认)
+- `--length_thresholds`: 长度阈值列表，逗号分隔 (如: 50,100,200)
+- `--special_tokens`: 特殊令牌列表，逗号分隔 (如: <step>,<think>)
+
+#### 模型配置
+- `--model_specs`: JSON 格式的模型规格列表
 
 服务启动后访问：
 - API 文档: http://localhost:8000/docs
