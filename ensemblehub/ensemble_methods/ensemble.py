@@ -219,7 +219,18 @@ class EnsembleFramework:
             question = example.get("instruction", "") + " " + example.get("input", "")
             conversation = ConversationTemplate("You are a helpful assistant.", question)
             prompt = conversation.render()
-            result = first_gen.generate({"prompt": prompt}, max_tokens=kwargs.get("max_tokens", 256))
+            # Prepare generation parameters
+            gen_kwargs = {
+                "max_tokens": kwargs.get("max_tokens", 256),
+                "temperature": kwargs.get("temperature", 0.95),
+                "top_p": kwargs.get("top_p", 0.7),
+            }
+            if "seed" in kwargs:
+                gen_kwargs["seed"] = kwargs["seed"]
+            if "stop_strings" in kwargs:
+                gen_kwargs["stop_strings"] = kwargs["stop_strings"]
+            
+            result = first_gen.generate({"prompt": prompt}, **gen_kwargs)
             output = result.text
         
         # Get model attribution data if available

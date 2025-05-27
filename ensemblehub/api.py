@@ -58,6 +58,8 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = Field(default=256, description="Maximum tokens to generate")
     temperature: float = Field(default=1.0, description="Sampling temperature")
     stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
+    stream: bool = Field(default=False, description="Stream responses")
+    seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     
     # Ensemble configuration
     ensemble_config: Optional[EnsembleConfig] = Field(default=None, description="Ensemble configuration")
@@ -92,14 +94,14 @@ class APIConfig:
     def __init__(self):
         # Default model specifications
         self.model_specs = [
-            # {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
-            # {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Smaller model
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:0"},
+            {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Smaller model
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:0"},
             # {"path": "Qwen/Qwen3-4B",                             "engine": "hf",   "device": "cuda:2"},
             # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf",   "device": "cuda:6"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:1"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:2"},
-            {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:3"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:1"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:2"},
+            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:3"},
         ]
         
         # Default reward specifications
@@ -138,7 +140,8 @@ def process_single_request(
     ensemble_config: EnsembleConfig,
     max_tokens: int,
     temperature: float,
-    stop: Optional[List[str]] = None
+    stop: Optional[List[str]] = None,
+    seed: Optional[int] = None
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
     
@@ -169,6 +172,14 @@ def process_single_request(
         "temperature": temperature,
         "show_attribution": ensemble_config.show_attribution
     }
+    
+    # Add seed if provided
+    if seed is not None:
+        ensemble_params["seed"] = seed
+    
+    # Add stop sequences if provided
+    if stop is not None:
+        ensemble_params["stop_strings"] = stop
     
     # Add progressive-specific parameters
     if ensemble_config.ensemble_method == "progressive":
@@ -255,6 +266,19 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     
     Returns OpenAI-compatible response format.
     """
+    # Debug logging for lm-eval requests
+    logger.info("="*80)
+    logger.info("Received request from lm-eval:")
+    logger.info(f"Model: {req.model}")
+    logger.info(f"Messages: {req.messages}")
+    logger.info(f"Prompt: {req.prompt}")
+    logger.info(f"Temperature: {req.temperature}")
+    logger.info(f"Max tokens: {req.max_tokens}")
+    logger.info(f"Stop: {req.stop}")
+    logger.info(f"Stream: {req.stream}")
+    logger.info(f"Full request: {req}")
+    logger.info("="*80)
+    
     try:
         # Use provided config or default
         ensemble_config = req.ensemble_config or api_config.default_ensemble_config
@@ -303,7 +327,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     ensemble_config,
                     req.max_tokens,
                     req.temperature,
-                    req.stop
+                    req.stop,
+                    req.seed
                 )
                 results = [result]
             except Exception as e:
@@ -319,7 +344,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                         ensemble_config, 
                         req.max_tokens,
                         req.temperature,
-                        req.stop
+                        req.stop,
+                        req.seed
                     )
                 except Exception as e:
                     logger.error(f"Error processing conversation {idx}: {e}")

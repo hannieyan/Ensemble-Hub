@@ -130,13 +130,21 @@ class RewardBasedSelector(BaseSentenceAggregator):
             # Generate from all models
             dicts = convo.render_dict()
             
+            # Prepare generation parameters
+            gen_kwargs = {
+                "max_tokens": kwargs.get("max_tokens", 16384 if len(available_gens) == 1 else 256),
+                "temperature": kwargs.get("temperature", 0.95),
+                "top_p": kwargs.get("top_p", 0.7),
+            }
+            if "seed" in kwargs:
+                gen_kwargs["seed"] = kwargs["seed"]
+            if "stop_strings" in kwargs:
+                gen_kwargs["stop_strings"] = kwargs["stop_strings"]
+            
             with ThreadPoolExecutor(max_workers=len(available_gens)) as executor:
                 outputs = list(
                     executor.map(
-                        lambda g: g.generate(
-                            dicts,
-                            max_tokens=(16384 if len(available_gens) == 1 else 256),
-                        ),
+                        lambda g: g.generate(dicts, **gen_kwargs),
                         available_gens
                     )
                 )

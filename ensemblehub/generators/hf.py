@@ -122,6 +122,7 @@ class HFGenerator(BaseGenerator):
         top_k=50,
         repetition_penalty=1.0,
         stop_strings: Optional[Union[str, List[str]]] = None,
+        seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
 
         # Handle string input by converting to dict format
@@ -139,9 +140,16 @@ class HFGenerator(BaseGenerator):
         text = self.tokenizer.decode(ids, skip_special_tokens=False)
 
         ids = self.tokenizer(text, return_tensors="pt").to(self.device)
+        
+        # Set seed for reproducibility if provided
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+        
         cfg = GenerationConfig(
-            do_sample=True,
-            temperature=temperature,
+            do_sample=True if temperature > 0 else False,  # Disable sampling for temperature=0
+            temperature=temperature if temperature > 0 else 1.0,
             top_p=top_p,
             top_k=top_k,
             repetition_penalty=repetition_penalty,

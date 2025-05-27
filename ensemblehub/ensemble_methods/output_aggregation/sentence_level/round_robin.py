@@ -88,7 +88,19 @@ class RoundRobinSelector(BaseSentenceAggregator):
             selected_generator = available_gens[gen_idx]
             
             dicts = convo.render_dict()
-            best_output = selected_generator.generate(dicts, max_tokens=max_new_tokens_per_round)
+            
+            # Prepare generation parameters
+            gen_kwargs = {
+                "max_tokens": kwargs.get("max_tokens", max_new_tokens_per_round),
+                "temperature": kwargs.get("temperature", 0.95),
+                "top_p": kwargs.get("top_p", 0.7),
+            }
+            if "seed" in kwargs:
+                gen_kwargs["seed"] = kwargs["seed"]
+            if "stop_strings" in kwargs:
+                gen_kwargs["stop_strings"] = kwargs["stop_strings"]
+            
+            best_output = selected_generator.generate(dicts, **gen_kwargs)
             
             # Record model attribution
             model_name = getattr(selected_generator, 'model_path', selected_generator.name)

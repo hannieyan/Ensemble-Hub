@@ -177,7 +177,7 @@ class VLLMGenerator(BaseGenerator):
             return f"{instruction}\n{input_text}"
 
     @torch.inference_mode()
-    def generate(self, dicts, *, max_tokens=256, temperature=0.95, top_p=0.7, **kwargs) -> GenOutput:
+    def generate(self, dicts, *, max_tokens=256, temperature=0.95, top_p=0.7, seed: Optional[int] = None, stop_strings: Optional[List[str]] = None, **kwargs) -> GenOutput:
         """Generate for single dict input."""
         if isinstance(dicts, str):
             # Handle direct string prompt
@@ -186,9 +186,18 @@ class VLLMGenerator(BaseGenerator):
             # Handle dict format like HFGenerator
             prompt = self._dict_to_prompt(dicts)
         
-        self._sp.max_tokens = max_tokens
-        self._sp.temperature = temperature
-        self._sp.top_p = top_p
+        # Update sampling parameters
+        # Use provided stop_strings or default to STOP_TOKENS_TEXT
+        stop_sequences = stop_strings if stop_strings is not None else list(STOP_TOKENS_TEXT)
+        
+        self._sp = SamplingParams(
+            max_tokens=max_tokens,
+            temperature=temperature if temperature > 0 else 0,  # vLLM uses 0 for greedy
+            top_p=top_p,
+            seed=seed,  # vLLM supports seed directly
+            stop=stop_sequences,
+            skip_special_tokens=True
+        )
         
         try:
             output = self._llm.generate([prompt], self._sp)[0]
@@ -200,7 +209,7 @@ class VLLMGenerator(BaseGenerator):
             return GenOutput("", False)
 
     @torch.inference_mode()
-    def batch_generate(self, dicts_list: List[dict], *, max_tokens=256, temperature=0.95, top_p=0.7, **kwargs) -> List[GenOutput]:
+    def batch_generate(self, dicts_list: List[dict], *, max_tokens=256, temperature=0.95, top_p=0.7, seed: Optional[int] = None, stop_strings: Optional[List[str]] = None, **kwargs) -> List[GenOutput]:
         """Batch generation for vLLM."""
         # Convert all dicts to prompts
         prompts = []
@@ -210,9 +219,18 @@ class VLLMGenerator(BaseGenerator):
             else:
                 prompts.append(self._dict_to_prompt(example_dict))
         
-        self._sp.max_tokens = max_tokens
-        self._sp.temperature = temperature
-        self._sp.top_p = top_p
+        # Update sampling parameters
+        # Use provided stop_strings or default to STOP_TOKENS_TEXT
+        stop_sequences = stop_strings if stop_strings is not None else list(STOP_TOKENS_TEXT)
+        
+        self._sp = SamplingParams(
+            max_tokens=max_tokens,
+            temperature=temperature if temperature > 0 else 0,  # vLLM uses 0 for greedy
+            top_p=top_p,
+            seed=seed,  # vLLM supports seed directly
+            stop=stop_sequences,
+            skip_special_tokens=True
+        )
         
         try:
             outputs = self._llm.generate(prompts, self._sp)

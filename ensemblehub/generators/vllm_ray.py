@@ -35,7 +35,6 @@ def get_remote_vllm_generator_class(num_gpus: int = 1):
     return ray.remote(num_gpus=num_gpus)(VLLMRayActor)
 
 
-@ray.remote
 class VLLMRayActor:
     """Ray actor for running vLLM on a specific GPU"""
     
