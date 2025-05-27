@@ -165,7 +165,7 @@ def process_single_request(
         "Requirements:\n"
         "- Be accurate and concise.\n"
         "- Use examples if necessary.\n"
-        "- Follow the expected format (e.g., code, LaTeX, markdown).\n"
+        "- Follow the expected format (e.g., ####, \\box{} code, LaTeX, markdown).\n"
         "- If the task involves writing, ensure clarity, logical flow, and correctness.\n"
         "- If uncertain, explain assumptions.\n\n"
         "Answer:"
