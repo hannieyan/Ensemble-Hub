@@ -127,11 +127,23 @@ python -m ensemblehub.api \
 ### 1. 基础聊天完成（使用默认配置）
 
 ```bash
+# 使用 prompt 字段（文本完成格式）
 curl -X POST "http://localhost:8000/v1/chat/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
   "prompt": "What is 2+2?",
+  "max_tokens": 100
+}'
+
+# 使用 messages 字段（聊天格式）
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "ensemble",
+  "messages": [
+    {"role": "user", "content": "What is 2+2?"}
+  ],
   "max_tokens": 100
 }'
 ```
@@ -143,7 +155,10 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
-  "prompt": "Solve this math problem: 15 × 23",
+  "messages": [
+    {"role": "system", "content": "You are a helpful math tutor."},
+    {"role": "user", "content": "Solve this math problem: 15 × 23"}
+  ],
   "max_tokens": 200,
   "ensemble_config": {
     "model_selection_method": "zscore",
@@ -155,7 +170,48 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 }'
 ```
 
-### 3. 循环推理端点（轮询模式）
+### 3. 渐进式集成示例
+
+#### 基于长度的渐进式集成
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "progressive-ensemble",
+  "messages": [
+    {"role": "system", "content": "You are a helpful math tutor."},
+    {"role": "user", "content": "Explain how to solve 15 + 27"}
+  ],
+  "max_tokens": 256,
+  "ensemble_config": {
+    "ensemble_method": "progressive",
+    "progressive_mode": "length",
+    "length_thresholds": [500, 1000, 1500],
+    "model_selection_method": "all",
+    "show_attribution": true
+  }
+}'
+```
+
+#### 基于特殊 Token 的渐进式集成
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "progressive-token",
+  "messages": [
+    {"role": "user", "content": "Think step by step: What is the derivative of x^2?"}
+  ],
+  "ensemble_config": {
+    "ensemble_method": "progressive",
+    "progressive_mode": "token",
+    "special_tokens": ["<\\think>", "<\\analyze>"],
+    "show_attribution": true
+  }
+}'
+```
+
+### 4. 循环推理端点（轮询模式）
 
 ```bash
 curl -X POST "http://localhost:8000/v1/loop/completions" \
@@ -171,7 +227,51 @@ curl -X POST "http://localhost:8000/v1/loop/completions" \
 }'
 ```
 
-### 4. 直接集成推理
+### 5. 批量请求示例
+
+#### 批量处理多个问题
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "batch-ensemble",
+  "messages": [
+    [
+      {"role": "user", "content": "What is 5 + 3?"}
+    ],
+    [
+      {"role": "user", "content": "What is 10 * 7?"}
+    ],
+    [
+      {"role": "system", "content": "You are a history expert."},
+      {"role": "user", "content": "When was the Declaration of Independence signed?"}
+    ]
+  ],
+  "max_tokens": 150,
+  "ensemble_config": {
+    "ensemble_method": "simple",
+    "model_selection_method": "all",
+    "show_attribution": true
+  }
+}'
+```
+
+#### 使用 Legacy Prompt 字段的批量请求
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "legacy-batch",
+  "prompt": [
+    "Calculate 8 * 9",
+    "What is the capital of France?",
+    "Explain photosynthesis in one sentence"
+  ],
+  "max_tokens": 100
+}'
+```
+
+### 6. 直接集成推理
 
 ```bash
 curl -X POST "http://localhost:8000/v1/ensemble/inference" \
@@ -267,76 +367,187 @@ curl -X POST "http://localhost:8000/v1/ensemble/batch" \
 
 ## 🔗 Python 客户端示例
 
+### 基础客户端类
 ```python
 import requests
+import json
 
 class EnsembleClient:
     def __init__(self, base_url="http://localhost:8000"):
         self.base_url = base_url
     
-    def chat_completion(self, prompt, ensemble_config=None, **kwargs):
+    def chat_completion(self, messages=None, prompt=None, ensemble_config=None, **kwargs):
         """发送聊天完成请求"""
         payload = {
-            "prompt": prompt,
-            "ensemble_config": ensemble_config,
-            **kwargs
+            "model": kwargs.get("model", "ensemble"),
+            "max_tokens": kwargs.get("max_tokens", 256)
         }
+        
+        if messages:
+            payload["messages"] = messages
+        elif prompt:
+            payload["prompt"] = prompt
+        else:
+            raise ValueError("Either messages or prompt must be provided")
+            
+        if ensemble_config:
+            payload["ensemble_config"] = ensemble_config
+            
         response = requests.post(f"{self.base_url}/v1/chat/completions", json=payload)
         return response.json()
     
-    def simple_ensemble(self, prompt, ensemble_method="reward_based", model_selection="all"):
-        """使用简单集成预设"""
+    def batch_completion(self, conversations, ensemble_config=None, **kwargs):
+        """批量处理多个对话"""
         payload = {
-            "prompt": prompt,
-            "ensemble_method": ensemble_method,
-            "model_selection_method": model_selection
+            "model": "batch-ensemble",
+            "messages": conversations,  # List[List[Message]]
+            "max_tokens": kwargs.get("max_tokens", 256)
         }
-        response = requests.post(f"{self.base_url}/v1/ensemble/presets/simple", json=payload)
+        
+        if ensemble_config:
+            payload["ensemble_config"] = ensemble_config
+        
+        response = requests.post(f"{self.base_url}/v1/chat/completions", json=payload)
         return response.json()
+```
 
-# 使用示例
+### 单个请求示例
+```python
+# 初始化客户端
 client = EnsembleClient()
 
-# 基础调用
-result = client.chat_completion("What is artificial intelligence?")
-print(result["choices"][0]["text"])
+# 基础聊天请求
+messages = [
+    {"role": "user", "content": "What is artificial intelligence?"}
+]
+result = client.chat_completion(messages=messages)
+print(result["choices"][0]["message"]["content"])
 
-# 自定义配置
+# 使用渐进式集成
+messages = [
+    {"role": "user", "content": "Solve: 2x + 5 = 15"}
+]
+
 config = {
-    "model_selection_method": "zscore",
-    "aggregation_method": "reward_based",
-    "use_model_selection": True,
-    "use_output_aggregation": True
+    "ensemble_method": "progressive",
+    "progressive_mode": "length",
+    "length_thresholds": [500, 1000],
+    "show_attribution": True
 }
-result = client.chat_completion("Solve: 2x + 3 = 7", ensemble_config=config)
-print(result["choices"][0]["text"])
+
+result = client.chat_completion(messages=messages, ensemble_config=config)
+print(json.dumps(result, indent=2))
+```
+
+### 批量请求示例
+```python
+# 批量处理多个问题
+conversations = [
+    [{"role": "user", "content": "What is 15 + 27?"}],
+    [{"role": "user", "content": "Calculate 8 * 9"}],
+    [{"role": "user", "content": "What is the square root of 144?"}]
+]
+
+config = {
+    "ensemble_method": "progressive",
+    "progressive_mode": "token",
+    "special_tokens": ["<\\think>"],
+    "show_attribution": True
+}
+
+batch_result = client.batch_completion(conversations, config)
+
+# 处理结果
+for i, choice in enumerate(batch_result["choices"]):
+    print(f"Conversation {i}:")
+    print(f"  Response: {choice['message']['content']}")
+    if choice.get("metadata", {}).get("attribution"):
+        attr = choice["metadata"]["attribution"]
+        print(f"  Attribution: {attr['summary']}")
+    print()
 ```
 
 ## 📊 响应格式
 
-### Chat Completions 响应
+### 单个请求响应格式
 ```json
 {
-  "id": "cmpl-uuid",
-  "object": "text_completion",
-  "created": 1234567890,
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1710123456,
   "model": "ensemble",
   "choices": [
     {
       "index": 0,
-      "text": "生成的文本...",
+      "message": {
+        "role": "assistant",
+        "content": "Generated response text"
+      },
       "finish_reason": "stop",
       "metadata": {
-        "selected_models": ["model1", "model2"],
-        "method": "zscore+reward_based",
-        "ensemble_config": {...}
+        "selected_models": ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen2.5-0.5B-Instruct"],
+        "method": "all+progressive",
+        "attribution": {
+          "summary": "[R01:Qwen2.5-1.5B-Instruct] → [R02:Qwen2.5-0.5B-Instruct]",
+          "detailed": [
+            {
+              "text": "First part of response",
+              "model": "Qwen/Qwen2.5-1.5B-Instruct",
+              "round": 1,
+              "length": 50
+            },
+            {
+              "text": "Second part of response",
+              "model": "Qwen/Qwen2.5-0.5B-Instruct",
+              "round": 2,
+              "length": 45
+            }
+          ]
+        }
       }
     }
   ],
   "usage": {
     "prompt_tokens": 10,
-    "completion_tokens": 50,
-    "total_tokens": 60
+    "completion_tokens": 95,
+    "total_tokens": 105
+  }
+}
+```
+
+### 批量请求响应格式
+批量请求会在 `choices` 数组中返回多个结果，每个结果对应一个输入对话：
+
+```json
+{
+  "id": "chatcmpl-batch-...",
+  "object": "chat.completion",
+  "created": 1710123456,
+  "model": "batch-ensemble",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Answer to first question"
+      },
+      "finish_reason": "stop",
+      "metadata": {...}
+    },
+    {
+      "index": 1,
+      "message": {
+        "role": "assistant",
+        "content": "Answer to second question"
+      },
+      "finish_reason": "stop",
+      "metadata": {...}
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 100,
+    "total_tokens": 120
   }
 }
 ```
@@ -598,5 +809,19 @@ Stop: ['Question:', '</s>', '<|im_end|>']
 Seed: 1234
 ================================================================================
 ```
+
+## 🔄 自动批量检测规则
+
+API 会自动检测请求类型，无需使用不同的端点：
+
+1. **单个请求**: 
+   - `messages` 是 `List[Message]` 格式
+   - `prompt` 是单个字符串
+
+2. **批量请求**: 
+   - `messages` 是 `List[List[Message]]` 格式
+   - `prompt` 是字符串列表 `List[str]`
+
+同一个 `/v1/chat/completions` 端点可以处理所有情况，自动识别并正确处理。
 
 这个增强的 API 提供了完全的灵活性，让你可以根据需要选择和配置不同的集成方法！
