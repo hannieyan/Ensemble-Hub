@@ -12,6 +12,8 @@ __pycache__/
 # Test output files  
 test/*.json
 test/*.jsonl
+test/**/*.log
+test/**/*.json
 
 # Selection output files (exclude data/)
 ensemblehub/selection/output/
