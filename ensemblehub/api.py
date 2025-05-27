@@ -111,7 +111,7 @@ class APIConfig:
         ]
         
         # Default reward specifications
-        self.    reward_spec = [
+        self.reward_spec = [
             # {"path": "Qwen/Qwen2.5-Math-PRM-7B",                  "engine": "hf_rm",  "device": "cuda:0", "weight": 0.2},
             # {"path": "http://localhost:8000/v1/score/evaluation", "engine": "api",                        "weight": 0.4},
             # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf_gen", "device": "cuda:0", "weight": 1.0},

@@ -66,11 +66,13 @@ class HFGenerator(BaseGenerator):
             ).eval()
             self.device = next(self.model.parameters()).device
         else:
-            # For specific device, avoid device_map and load directly to target device
+            # For specific device, use device_map to handle large models properly
+            # This avoids meta tensor issues
             self.model = AutoModelForCausalLM.from_pretrained(
                 path,
+                device_map={"": device},  # Map all layers to the specified device
                 **memory_optimization
-            ).eval().to(device)
+            ).eval()
             self.device = torch.device(device)
             
         self.name = path

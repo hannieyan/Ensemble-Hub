@@ -27,6 +27,7 @@ class GeneratorPool:
     _gen_cache: Dict[Tuple[str, str, str, str], BaseGenerator] = {}  # (engine, path, quantization, device)
     _reward_cache: Dict[str, str] = {}
     _vllm_lock = threading.Lock()  # Lock for vLLM initialization
+    _hf_lock = threading.Lock()  # Lock for HF model initialization
     _vllm_instances = {}  # Track active vLLM instances by device
     _initialized_devices = set()  # Track which devices have been initialized
 
@@ -42,7 +43,11 @@ class GeneratorPool:
             logger.info("[Pool] loading %s (%s) with quantization=%s on device=%s", path, engine, quantization, resolved_device)
 
             if engine == "hf":
-                cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization)
+                # Use lock to prevent concurrent HF model initialization
+                with cls._hf_lock:
+                    # Double-check if another thread already initialized it
+                    if key not in cls._gen_cache:
+                        cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization)
             elif engine == "vllm":
                 # Use lock to prevent concurrent vLLM initialization
                 with cls._vllm_lock:
