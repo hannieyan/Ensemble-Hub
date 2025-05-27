@@ -97,11 +97,12 @@ class APIConfig:
     def __init__(self):
         # Debug settings
         self.show_input_details = False
+        self.enable_thinking = False
         
         # Default model specifications
         self.model_specs = [
-            {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
-            {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Smaller model
+            {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "hf", "device": "cpu"},  # Larger model
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "hf", "device": "cpu"},  # Smaller model
             # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:0"},
             # {"path": "Qwen/Qwen3-4B",                             "engine": "hf",   "device": "cuda:2"},
             # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf",   "device": "cuda:6"},
@@ -180,10 +181,17 @@ def process_single_request(
         "output": ""
     }
     
+    # Prepare model specs with enable_thinking
+    model_specs_with_thinking = []
+    for spec in api_config.model_specs:
+        spec_copy = spec.copy()
+        spec_copy["enable_thinking"] = api_config.enable_thinking
+        model_specs_with_thinking.append(spec_copy)
+    
     # Prepare ensemble parameters
     ensemble_params = {
         "example": example,
-        "model_specs": api_config.model_specs,
+        "model_specs": model_specs_with_thinking,
         "reward_spec": api_config.reward_spec,
         "ensemble_method": ensemble_config.ensemble_method,
         "model_selection_method": ensemble_config.model_selection_method,
@@ -191,8 +199,7 @@ def process_single_request(
         "score_threshold": ensemble_config.score_threshold,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "show_attribution": ensemble_config.show_attribution,
-        "enable_thinking": ensemble_config.enable_thinking
+        "show_attribution": ensemble_config.show_attribution
     }
     
     # Add seed if provided
@@ -563,6 +570,7 @@ def create_app_with_config(
     
     # Set debug flag
     api_config.show_input_details = show_input_details
+    api_config.enable_thinking = enable_thinking
     
     logger.info(f"API initialized with:")
     logger.info(f"  Model selection: {model_selection_method}")

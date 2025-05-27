@@ -147,6 +147,9 @@ python -m ensemblehub.api --model_selection_method zscore --ensemble_method simp
 # Custom server configuration
 python -m ensemblehub.api --host 0.0.0.0 --port 9876 \
   --ensemble_method loop --show_attribution
+
+# Enable thinking mode for reasoning models (e.g., DeepSeek-R1)
+python -m ensemblehub.api --model_selection_method all --ensemble_method loop --enable_thinking
 ```
 
 **Available Configuration Options:**
@@ -154,6 +157,7 @@ python -m ensemblehub.api --host 0.0.0.0 --port 9876 \
 - **Ensemble Methods**: `simple` (reward-based), `progressive`, `random`, `loop` (round-robin)
 - **Progressive Options**: `--progressive_mode`, `--length_thresholds`, `--special_tokens`
 - **General**: `--max_rounds`, `--score_threshold`, `--show_attribution`
+- **Thinking Mode**: `--enable_thinking` (enables reasoning models' thinking process)
 
 > **Note**: Command line ensemble configuration only works with `python -m ensemblehub.api`. When using `uvicorn`, only server settings (host/port) are configurable.
 
@@ -343,6 +347,14 @@ Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() i
 - [ ] Streaming API interface (SSE)
 - [ ] Web interface for ensemble configuration
 - [ ] Advanced scorer aggregation methods
+
+## 📝 Changelog
+
+### Recent Updates
+
+- **Enable Thinking Mode**: Refactored `enable_thinking` parameter to be configured at model initialization level instead of generation time. This allows better integration with LLaMA-Factory's template system and supports reasoning models like DeepSeek-R1.
+- **Consistent Length Handling**: Updated tokenizer calls to use `cutoff_len` from DataArguments for consistent max_length handling across all generation methods.
+- **API Improvements**: Added `--enable_thinking` command line flag for easy configuration of reasoning models.
 
 ## 📜 License
 

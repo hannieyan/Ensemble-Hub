@@ -27,7 +27,7 @@ logger = logging.getLogger("ensemble_inference")
 class HFGenerator(BaseGenerator):
     """HuggingFace Transformers-based text generator"""
     
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", **model_kwargs):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         
         # Memory optimization parameters
@@ -76,6 +76,7 @@ class HFGenerator(BaseGenerator):
             self.device = torch.device(device)
             
         self.name = path
+        self.enable_thinking = enable_thinking
         self.__post_init__()
     
 
@@ -86,18 +87,19 @@ class HFGenerator(BaseGenerator):
             self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
         ]
 
+        # Store data_args as instance variable for later use
         if "Qwen3" in self.name:
-            data_args = DataArguments(template="qwen3")
+            self.data_args = DataArguments(template="qwen3", enable_thinking=self.enable_thinking)
             self.indent = 2
         elif "Qwen2.5" in self.name:
-            data_args = DataArguments(template="qwen")
+            self.data_args = DataArguments(template="qwen", enable_thinking=self.enable_thinking)
             self.indent = 2
         elif "DeepSeek-R1" in self.name:
-            data_args = DataArguments(template="deepseekr1")
+            self.data_args = DataArguments(template="deepseekr1", enable_thinking=self.enable_thinking)
             self.indent = 1
         else:
             logger.warning(f"Unknown model template for {self.name}, using default")
-            data_args = DataArguments(template="default")
+            self.data_args = DataArguments(template="default", enable_thinking=self.enable_thinking)
             self.indent = 1
 
         dataset_attr = DatasetAttr(
@@ -109,15 +111,14 @@ class HFGenerator(BaseGenerator):
             dataset_name="",
         )
 
-        self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=data_args)
-        self.template = get_template_and_fix_tokenizer(self.tokenizer, data_args)
+        self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=self.data_args)
+        self.template = get_template_and_fix_tokenizer(self.tokenizer, self.data_args)
 
     @torch.inference_mode()
     def generate(
         self,
         dicts,
         *,
-        enable_thinking: bool = False,
         max_tokens=256,
         temperature=0.95,
         top_p=0.7,
@@ -135,13 +136,14 @@ class HFGenerator(BaseGenerator):
         prompt_msgs = converted["_prompt"]
         response_msgs = converted["_response"]
         messages = prompt_msgs + response_msgs
-        prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages, enable_thinking=enable_thinking)
+        system = converted.get("_system", None)
+        prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
 
         ids = prompt_ids + response_ids[:-self.indent]
 
         text = self.tokenizer.decode(ids, skip_special_tokens=False)
 
-        ids = self.tokenizer(text, return_tensors="pt").to(self.device)
+        ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
         
         # Set seed for reproducibility if provided
         if seed is not None:
@@ -184,7 +186,6 @@ class HFGenerator(BaseGenerator):
         self,
         dicts_list: List[Union[dict, str]],
         *,
-        enable_thinking: bool = False,
         max_tokens=256,
         temperature=0.95,
         top_p=0.7,
@@ -206,7 +207,8 @@ class HFGenerator(BaseGenerator):
             prompt_msgs = converted["_prompt"]
             response_msgs = converted["_response"]
             messages = prompt_msgs + response_msgs
-            prompt_ids, response_ids = self.template.encode_oneturn(self.tokenizer, messages, enable_thinking=enable_thinking)
+            system = converted.get("_system", None)
+            prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
             
             ids = prompt_ids + response_ids[:-self.indent]
             text = self.tokenizer.decode(ids, skip_special_tokens=False)
@@ -218,7 +220,7 @@ class HFGenerator(BaseGenerator):
             return_tensors="pt", 
             padding=True, 
             truncation=True,
-            max_length=2048
+            max_length=self.data_args.cutoff_len
         ).to(self.device)
 
         cfg = GenerationConfig(
