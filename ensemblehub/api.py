@@ -201,6 +201,9 @@ def process_single_request(
     if ensemble_config.show_attribution and "attribution" in result:
         attribution_summary = result["attribution"].get("summary", "No summary available")
         logger.info(f"📝 Model Attribution: {attribution_summary}")
+        # Also log the generated output for visibility
+        output_preview = output[:200] + "..." if len(output) > 200 else output
+        logger.info(f"📄 Generated Output: {output_preview}")
     
     # Apply stop sequences
     finish_reason = "length"
