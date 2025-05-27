@@ -197,6 +197,11 @@ def process_single_request(
     
     output = result["output"]
     
+    # Log attribution information if requested
+    if ensemble_config.show_attribution and "attribution" in result:
+        attribution_summary = result["attribution"].get("summary", "No summary available")
+        logger.info(f"📝 Model Attribution: {attribution_summary}")
+    
     # Apply stop sequences
     finish_reason = "length"
     if stop:
