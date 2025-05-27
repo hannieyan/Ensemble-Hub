@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from .base import BaseModelSelector
-from ...generator import GeneratorPool
+from ...generators import GeneratorPool
 
 logger = logging.getLogger(__name__)
 
