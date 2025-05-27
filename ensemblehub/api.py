@@ -46,6 +46,9 @@ class EnsembleConfig(BaseModel):
     
     # Attribution
     show_attribution: bool = Field(default=False, description="Include model attribution information")
+    
+    # Thinking mode
+    enable_thinking: bool = Field(default=False, description="Enable thinking mode for models that support it")
 
 class ChatCompletionRequest(BaseModel):
     """Unified chat completion request - handles both single and batch"""
@@ -153,7 +156,22 @@ def process_single_request(
     
     # Find system message if any
     system_messages = [msg for msg in messages if msg.role == "system"]
-    instruction = system_messages[0].content if system_messages else "You are a helpful assistant."
+    
+    # Default instruction with emphasis on instruction following for evaluation tasks
+    default_instruction = (
+        "You are a helpful, precise, and knowledgeable assistant. Please complete the following task "
+        "carefully and with detailed reasoning:\n\n"
+        "[Insert your task or question here]\n\n"
+        "Requirements:\n"
+        "- Be accurate and concise.\n"
+        "- Use examples if necessary.\n"
+        "- Follow the expected format (e.g., code, LaTeX, markdown).\n"
+        "- If the task involves writing, ensure clarity, logical flow, and correctness.\n"
+        "- If uncertain, explain assumptions.\n\n"
+        "Answer:"
+    )
+    
+    instruction = system_messages[0].content if system_messages else default_instruction
     
     # Create example for ensemble
     example = {
@@ -173,7 +191,8 @@ def process_single_request(
         "score_threshold": ensemble_config.score_threshold,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "show_attribution": ensemble_config.show_attribution
+        "show_attribution": ensemble_config.show_attribution,
+        "enable_thinking": ensemble_config.enable_thinking
     }
     
     # Add seed if provided
@@ -494,6 +513,7 @@ def create_app_with_config(
     score_threshold: float = -2.0,
     show_attribution: bool = False,
     show_input_details: bool = False,
+    enable_thinking: bool = False,
     model_specs: str = None,
     hf_use_8bit: bool = False,
     hf_use_4bit: bool = False
@@ -513,7 +533,8 @@ def create_app_with_config(
         special_tokens=special_token_list,
         max_rounds=max_rounds,
         score_threshold=score_threshold,
-        show_attribution=show_attribution
+        show_attribution=show_attribution,
+        enable_thinking=enable_thinking
     )
     
     # Update model specs if provided
@@ -549,6 +570,7 @@ def create_app_with_config(
     logger.info(f"  Max rounds: {max_rounds}")
     logger.info(f"  Show attribution: {show_attribution}")
     logger.info(f"  Show input details: {show_input_details}")
+    logger.info(f"  Enable thinking: {enable_thinking}")
     logger.info(f"  Models: {len(api_config.model_specs)}")
     
     return app
@@ -585,6 +607,8 @@ if __name__ == "__main__":
                        help="Show model attribution by default")
     parser.add_argument("--show_input_details", action="store_true",
                        help="Show detailed input parameters in logs")
+    parser.add_argument("--enable_thinking", action="store_true",
+                       help="Enable thinking mode for models that support it")
     parser.add_argument("--model_specs", type=str, default=None,
                        help="Model specifications in format 'model1:engine:device,model2:engine:device'")
     
@@ -625,6 +649,7 @@ if __name__ == "__main__":
         score_threshold=args.score_threshold,
         show_attribution=args.show_attribution,
         show_input_details=args.show_input_details,
+        enable_thinking=args.enable_thinking,
         model_specs=args.model_specs,
         hf_use_8bit=args.hf_use_8bit,
         hf_use_4bit=args.hf_use_4bit

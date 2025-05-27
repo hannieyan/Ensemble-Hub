@@ -96,6 +96,8 @@ class RandomSentenceSelector(BaseSentenceAggregator):
                 gen_kwargs["seed"] = kwargs["seed"]
             if "stop_strings" in kwargs:
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
+            if "enable_thinking" in kwargs:
+                gen_kwargs["enable_thinking"] = kwargs["enable_thinking"]
             
             best_output = selected_generator.generate(dicts, **gen_kwargs)
             
