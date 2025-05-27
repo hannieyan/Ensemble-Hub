@@ -32,7 +32,7 @@ def test_progressive_selector_length_mode():
     logger.info("Testing ProgressiveSelector with length-based switching...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
         
         # Use two small models for testing - updated to available models
@@ -105,7 +105,7 @@ def test_progressive_selector_token_mode():
     logger.info("Testing ProgressiveSelector with token-based switching...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
         
         # Use two small models for testing
@@ -247,7 +247,7 @@ def test_progressive_selector_single_model():
     logger.info("Testing ProgressiveSelector with single model...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
         
         # Load single model

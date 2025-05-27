@@ -4,6 +4,7 @@ Generator modules for different inference backends
 from .base import BaseGenerator, GenOutput
 from .hf import HFGenerator
 from .vllm import VLLMGenerator
+from .pool import GeneratorPool
 
 # Optional Ray-based vLLM
 try:
@@ -14,6 +15,7 @@ try:
         "HFGenerator",
         "VLLMGenerator",
         "VLLMRayGenerator",
+        "GeneratorPool",
     ]
 except ImportError:
     __all__ = [
@@ -21,4 +23,5 @@ except ImportError:
         "GenOutput", 
         "HFGenerator",
         "VLLMGenerator",
+        "GeneratorPool",
     ]

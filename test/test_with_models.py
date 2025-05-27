@@ -22,7 +22,7 @@ def test_single_model_generation():
     logger.info("Testing single model generation...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         from ensemblehub.conversation import ConversationTemplate
         
         # Use the smallest available model
@@ -58,7 +58,7 @@ def test_batch_generation():
     logger.info("Testing batch generation...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         
         model_path = "Qwen/Qwen2.5-0.5B-Instruct"
         device = "cpu"
@@ -188,7 +188,7 @@ def test_progressive_selector():
     logger.info("Testing ProgressiveSelector...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         from ensemblehub.ensemble_methods.output_aggregation.sentence_level import ProgressiveSelector
         
         # Create a simple constant scorer for testing

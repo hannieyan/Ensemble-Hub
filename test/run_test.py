@@ -78,7 +78,7 @@ def test_generator_batch():
     logger.info("Testing generator batch functionality...")
     
     try:
-        from ensemblehub.generator import HFGenerator
+        from ensemblehub.generators import HFGenerator
         
         # Test data
         test_dicts = [

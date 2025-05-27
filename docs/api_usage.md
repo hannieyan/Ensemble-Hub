@@ -40,6 +40,12 @@ python -m ensemblehub.api --model_selection_method all --ensemble_method loop \
 # 配置自定义模型
 python -m ensemblehub.api --model_specs '[{"path":"model1","engine":"hf"},{"path":"model2","engine":"hf"}]'
 
+# 显示模型归属信息
+python -m ensemblehub.api --show_attribution
+
+# 显示详细输入参数（用于调试）
+python -m ensemblehub.api --show_input_details
+
 # 完整配置示例
 python -m ensemblehub.api \
   --host 0.0.0.0 --port 8080 \
@@ -50,7 +56,9 @@ python -m ensemblehub.api \
   --special_tokens "<step>,<think>" \
   --max_rounds 5 \
   --score_threshold -2.0 \
-  --max_repeat 3
+  --max_repeat 3 \
+  --show_attribution \
+  --show_input_details
 ```
 
 ### 可用的命令行参数
@@ -83,6 +91,10 @@ python -m ensemblehub.api \
 
 #### 模型配置
 - `--model_specs`: JSON 格式的模型规格列表
+
+#### 调试和输出配置
+- `--show_attribution`: 显示模型归属信息（哪个模型生成了哪部分输出）
+- `--show_input_details`: 显示详细的输入参数（用于调试 API 请求）
 
 服务启动后访问：
 - API 文档: http://localhost:8000/docs
@@ -527,6 +539,64 @@ python -m ensemblehub.api --ensemble_method loop
 
 # ❌ 不支持自定义配置
 uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
+```
+
+## 🔗 lm-evaluation-harness 兼容性
+
+Ensemble-Hub API 完全兼容 lm-evaluation-harness，支持所有标准参数：
+
+### 使用 lm-eval 测试
+
+```bash
+# 基础测试
+lm_eval --model openai-completions \
+  --tasks gsm8k \
+  --model_args model=ensemble,base_url=http://localhost:8000/v1/chat/completions,tokenizer_backend=None \
+  --batch_size 2 \
+  --num_fewshot 5
+
+# 完整参数示例
+OPENAI_API_KEY=dummy lm_eval \
+  --model openai-completions \
+  --tasks gsm8k,hendrycks_math \
+  --model_args model=ensemble,base_url=http://localhost:8000/v1/chat/completions,tokenizer_backend=None \
+  --batch_size 16 \
+  --num_fewshot 5 \
+  --limit 100
+```
+
+### 支持的 lm-eval 参数
+
+API 完全支持以下 lm-evaluation-harness 参数：
+
+- **`max_tokens`**: 最大生成令牌数
+- **`temperature`**: 采样温度（0 表示贪婪解码）
+- **`stop`**: 停止序列列表（如 `["Question:", "</s>", "<|im_end|>"]`）
+- **`seed`**: 随机种子，用于结果可重现性
+
+### 调试 lm-eval 请求
+
+当需要调试 lm-evaluation-harness 发送的请求时：
+
+```bash
+# 启动 API 并显示输入详情
+python -m ensemblehub.api --show_input_details
+
+# 运行 lm-eval，API 日志将显示完整请求内容
+```
+
+示例日志输出：
+```
+================================================================================
+Received API request:
+Model: ensemble
+Messages: None
+Prompt: Question: Janet's ducks lay 16 eggs per day...
+Temperature: 0.0
+Max tokens: 256
+Stop: ['Question:', '</s>', '<|im_end|>']
+Seed: 1234
+================================================================================
 ```
 
 这个增强的 API 提供了完全的灵活性，让你可以根据需要选择和配置不同的集成方法！

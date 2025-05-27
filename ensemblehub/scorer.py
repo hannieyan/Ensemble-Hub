@@ -11,7 +11,7 @@ from transformers import (
     GenerationConfig,
 )
 
-from ensemblehub.generator import BaseGenerator, HFGenerator
+from ensemblehub.generators import BaseGenerator, HFGenerator
 
 logger = logging.getLogger(__name__)
 

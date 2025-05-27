@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Import ensemble framework
 from ensemblehub.utils import run_ensemble, get_default_model_stats
-from ensemblehub.generator import GeneratorPool
+from ensemblehub.generators import GeneratorPool
 from ensemblehub.scorer import ScorerPool
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,9 @@ app = FastAPI(
 # Global configuration
 class APIConfig:
     def __init__(self):
+        # Debug settings
+        self.show_input_details = False
+        
         # Default model specifications
         self.model_specs = [
             {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "vllm", "device": "cpu"},  # Larger model
@@ -266,18 +269,20 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     
     Returns OpenAI-compatible response format.
     """
-    # Debug logging for lm-eval requests
-    logger.info("="*80)
-    logger.info("Received request from lm-eval:")
-    logger.info(f"Model: {req.model}")
-    logger.info(f"Messages: {req.messages}")
-    logger.info(f"Prompt: {req.prompt}")
-    logger.info(f"Temperature: {req.temperature}")
-    logger.info(f"Max tokens: {req.max_tokens}")
-    logger.info(f"Stop: {req.stop}")
-    logger.info(f"Stream: {req.stream}")
-    logger.info(f"Full request: {req}")
-    logger.info("="*80)
+    # Debug logging for input details (only if enabled)
+    if api_config.show_input_details:
+        logger.info("="*80)
+        logger.info("Received API request:")
+        logger.info(f"Model: {req.model}")
+        logger.info(f"Messages: {req.messages}")
+        logger.info(f"Prompt: {req.prompt}")
+        logger.info(f"Temperature: {req.temperature}")
+        logger.info(f"Max tokens: {req.max_tokens}")
+        logger.info(f"Stop: {req.stop}")
+        logger.info(f"Stream: {req.stream}")
+        logger.info(f"Seed: {req.seed}")
+        logger.info(f"Full request: {req}")
+        logger.info("="*80)
     
     try:
         # Use provided config or default
@@ -476,6 +481,7 @@ def create_app_with_config(
     max_rounds: int = 500,
     score_threshold: float = -2.0,
     show_attribution: bool = False,
+    show_input_details: bool = False,
     model_specs: str = None,
     hf_use_8bit: bool = False,
     hf_use_4bit: bool = False
@@ -522,11 +528,15 @@ def create_app_with_config(
                 spec["quantization"] = quantization
                 logger.info(f"Applying {quantization} quantization to {spec['path']}")
     
+    # Set debug flag
+    api_config.show_input_details = show_input_details
+    
     logger.info(f"API initialized with:")
     logger.info(f"  Model selection: {model_selection_method}")
     logger.info(f"  Ensemble method: {ensemble_method}")
     logger.info(f"  Max rounds: {max_rounds}")
     logger.info(f"  Show attribution: {show_attribution}")
+    logger.info(f"  Show input details: {show_input_details}")
     logger.info(f"  Models: {len(api_config.model_specs)}")
     
     return app
@@ -561,6 +571,8 @@ if __name__ == "__main__":
                        help="Score threshold for early stopping (default: -2.0)")
     parser.add_argument("--show_attribution", action="store_true",
                        help="Show model attribution by default")
+    parser.add_argument("--show_input_details", action="store_true",
+                       help="Show detailed input parameters in logs")
     parser.add_argument("--model_specs", type=str, default=None,
                        help="Model specifications in format 'model1:engine:device,model2:engine:device'")
     
@@ -600,6 +612,7 @@ if __name__ == "__main__":
         max_rounds=args.max_rounds,
         score_threshold=args.score_threshold,
         show_attribution=args.show_attribution,
+        show_input_details=args.show_input_details,
         model_specs=args.model_specs,
         hf_use_8bit=args.hf_use_8bit,
         hf_use_4bit=args.hf_use_4bit

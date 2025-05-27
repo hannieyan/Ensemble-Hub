@@ -7,7 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 
 from ensemblehub.conversation import ConversationTemplate
-from ensemblehub.generator import GeneratorPool
+from ensemblehub.generators import GeneratorPool
 from ensemblehub.scorer import ScorerPool
 from ensemblehub.statistics.compute_model_stats import ModelStatStore
 
