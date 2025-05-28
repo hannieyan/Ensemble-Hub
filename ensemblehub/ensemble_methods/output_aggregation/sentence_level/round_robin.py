@@ -46,7 +46,7 @@ class RoundRobinSelector(BaseSentenceAggregator):
         scorers,
         example: Dict[str, Any],
         max_rounds: int = 500,
-        max_new_tokens_per_round: int = 2048,
+        max_new_tokens_per_round: int = 256,
         **kwargs
     ) -> str:
         """

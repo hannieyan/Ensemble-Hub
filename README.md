@@ -88,10 +88,16 @@ Ensemble-Hub/
 
 ```bash
 conda create -n ensemble python=3.12
+conda activate ensemble
 
 git clone --depth 1 https://github.com/hiyouga/LLaMA-Factory.git
 cd LLaMA-Factory
 pip install -e ".[torch,metrics]" --no-build-isolation
+cd ..
+
+git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
+cd lm-evaluation-harness
+pip install -e .
 cd ..
 
 git clone https://github.com/Fzkuji/Ensemble-Hub.git
