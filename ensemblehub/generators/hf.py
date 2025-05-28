@@ -93,6 +93,8 @@ class HFGenerator(BaseGenerator):
         # Template settings are already set in __init__
         # self.use_internal_template and self.format_type are instance variables
         
+        logger.info(f"🏗️  HFGenerator {self.name} initialized with use_internal_template={self.use_internal_template}")
+        
         # Store data_args as instance variable for later use
         if self.use_internal_template:
             if "Qwen3" in self.name:
@@ -110,6 +112,7 @@ class HFGenerator(BaseGenerator):
                 self.indent = 1
         else:
             # No internal template - use empty template
+            logger.info(f"🚫 Using empty template for {self.name}")
             self.data_args = DataArguments(template="empty", enable_thinking=False)
             self.indent = 1
 
@@ -200,19 +203,24 @@ class HFGenerator(BaseGenerator):
             # Choose converter based on format type and template setting
             if not self.use_internal_template:
                 # No internal template - pass through the text directly
+                logger.info(f"  🚫 Using no template - direct text processing")
                 if isinstance(dicts, str):
                     text = dicts
                 else:
                     # Extract text from dict
                     text = dicts.get("input", "") or dicts.get("prompt", "")
+                logger.info(f"  📝 Direct text: {text[:200]}...")
                 ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
             else:
                 # Use internal template with appropriate converter
+                logger.info(f"  🏗️  Using internal template processing")
                 if isinstance(dicts, dict) and "messages" in dicts:
                     # Has messages field - use sharegpt format
+                    logger.info(f"  📋 Using sharegpt converter")
                     converter = self.sharegpt_converter
                 else:
                     # Use alpaca format (for instruction/input or string input)
+                    logger.info(f"  🦙 Using alpaca converter")
                     converter = self.alpaca_converter
                     # Handle string input by converting to dict format
                     if isinstance(dicts, str):
