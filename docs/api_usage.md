@@ -140,7 +140,7 @@ After starting the service, access:
 - `POST /v1/ensemble/config` - Update configuration
 
 ### 3. Inference Endpoints
-- `POST /v1/chat/completions` - OpenAI-compatible chat completion
+- `POST /v1/completions` - OpenAI-compatible chat completion
 - `POST /v1/loop/completions` - Dedicated loop inference endpoint (round-robin mode)
 - `POST /v1/ensemble/inference` - Direct ensemble inference
 - `POST /v1/ensemble/batch` - Batch inference
@@ -156,7 +156,7 @@ After starting the service, access:
 
 ```bash
 # Using prompt field (text completion format)
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
@@ -165,7 +165,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 }'
 
 # Using messages field (chat format)
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
@@ -179,7 +179,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 ### 2. Chat Completion with Ensemble Configuration
 
 ```bash
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
@@ -202,7 +202,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 
 ```bash
 # Enable thinking mode for models that support it (e.g., DeepSeek-R1)
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "ensemble",
@@ -223,7 +223,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 
 #### Length-based Progressive Ensemble
 ```bash
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "progressive-ensemble",
@@ -244,7 +244,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 
 #### Token-based Progressive Ensemble
 ```bash
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "progressive-token",
@@ -280,7 +280,7 @@ curl -X POST "http://localhost:8000/v1/loop/completions" \
 
 #### Batch Processing Multiple Questions
 ```bash
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "batch-ensemble",
@@ -307,7 +307,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
 
 #### Batch Request Using Legacy Prompt Field
 ```bash
-curl -X POST "http://localhost:8000/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
   "model": "legacy-batch",
@@ -492,7 +492,7 @@ class EnsembleClient:
         if ensemble_config:
             payload["ensemble_config"] = ensemble_config
             
-        response = requests.post(f"{self.base_url}/v1/chat/completions", json=payload)
+        response = requests.post(f"{self.base_url}/v1/completions", json=payload)
         return response.json()
     
     def batch_completion(self, conversations, ensemble_config=None, **kwargs):
@@ -506,7 +506,7 @@ class EnsembleClient:
         if ensemble_config:
             payload["ensemble_config"] = ensemble_config
         
-        response = requests.post(f"{self.base_url}/v1/chat/completions", json=payload)
+        response = requests.post(f"{self.base_url}/v1/completions", json=payload)
         return response.json()
 ```
 
@@ -882,25 +882,25 @@ Ensemble-Hub API is fully compatible with lm-evaluation-harness, supporting all 
 export OPENAI_API_KEY=dummy
 
 # Basic test
-lm_eval --model openai-completions \
+lm_eval --model local-completions \
   --tasks gsm8k \
-  --model_args model=ensemble,base_url=http://localhost:8000/v1/chat/completions,tokenizer_backend=None \
+  --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
   --batch_size 2 \
   --num_fewshot 5
 
 # Full parameter example
-lm_eval --model openai-completions \
+lm_eval --model local-completions \
   --tasks gsm8k,hendrycks_math \
-  --model_args model=ensemble,base_url=http://localhost:8000/v1/chat/completions,tokenizer_backend=None \
+  --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
   --batch_size 16 \
   --num_fewshot 5 \
   --limit 100
 
 # Test with specific ensemble configuration
 export OPENAI_API_KEY=dummy
-lm_eval --model openai-completions \
+lm_eval --model local-completions \
   --tasks hendrycks_math \
-  --model_args model=ensemble,base_url=http://localhost:8000/v1/chat/completions,tokenizer_backend=None \
+  --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
   --batch_size 8 \
   --num_fewshot 4 \
   --seed 42
@@ -952,6 +952,6 @@ The API automatically detects request types without requiring different endpoint
    - `messages` is in `List[List[Message]]` format
    - `prompt` is a list of strings `List[str]`
 
-The same `/v1/chat/completions` endpoint handles all cases, automatically recognizing and processing correctly.
+The same `/v1/completions` endpoint handles all cases, automatically recognizing and processing correctly.
 
 This enhanced API provides complete flexibility, allowing you to select and configure different ensemble methods as needed!
