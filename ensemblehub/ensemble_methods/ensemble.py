@@ -191,7 +191,14 @@ class EnsembleFramework:
                 # Generator pool
                 selected_generators = []
                 for spec in selected_specs:
-                    gen = generators.get_generator(spec["path"], spec.get("engine", "hf"), spec.get("device"), spec.get("quantization", "none"), spec.get("enable_thinking", False))
+                    gen = generators.get_generator(
+                        spec["path"], 
+                        spec.get("engine", "hf"), 
+                        spec.get("device"), 
+                        spec.get("quantization", "none"), 
+                        spec.get("enable_thinking", False),
+                        spec.get("use_internal_template", True)
+                    )
                     selected_generators.append(gen)
             else:
                 # Assume generators is already a list
@@ -202,7 +209,7 @@ class EnsembleFramework:
                 generators=selected_generators,
                 scorers=scorers,
                 example=example,
-                **kwargs
+            **kwargs
             )
             
             logger.info("✅ Output aggregation completed")
@@ -210,7 +217,14 @@ class EnsembleFramework:
             logger.info("⏭️  Skipping output aggregation, using first model")
             # Simple fallback: use first selected model
             if hasattr(generators, 'get_generator'):
-                first_gen = generators.get_generator(selected_specs[0]["path"], selected_specs[0].get("engine", "hf"), selected_specs[0].get("device"), selected_specs[0].get("quantization", "none"), selected_specs[0].get("enable_thinking", False))
+                first_gen = generators.get_generator(
+                    selected_specs[0]["path"], 
+                    selected_specs[0].get("engine", "hf"), 
+                    selected_specs[0].get("device"), 
+                    selected_specs[0].get("quantization", "none"), 
+                    selected_specs[0].get("enable_thinking", False),
+                    selected_specs[0].get("use_internal_template", True)
+                )
             else:
                 first_gen = generators[0]
             
