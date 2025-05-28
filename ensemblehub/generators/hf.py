@@ -17,7 +17,7 @@ from transformers import (
 
 from llamafactory.data.template import get_template_and_fix_tokenizer
 from llamafactory.hparams import DataArguments
-from llamafactory.data.converter import AlpacaDatasetConverter
+from llamafactory.data.converter import AlpacaDatasetConverter, SharegptDatasetConverter
 from llamafactory.data.parser import DatasetAttr
 
 from .base import BaseGenerator, GenOutput, STOP_TOKENS_TEXT, trim_text
@@ -28,7 +28,7 @@ logger = logging.getLogger("ensemble_inference")
 class HFGenerator(BaseGenerator):
     """HuggingFace Transformers-based text generator"""
     
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, **model_kwargs):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, use_internal_template: bool = True, format_type: str = "alpaca", **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         
         # Memory optimization parameters
@@ -78,6 +78,8 @@ class HFGenerator(BaseGenerator):
             
         self.name = path
         self.enable_thinking = enable_thinking
+        self.use_internal_template = use_internal_template
+        self.format_type = format_type
         self._lock = threading.Lock()  # Thread safety for concurrent access
         self.__post_init__()
     
@@ -89,22 +91,31 @@ class HFGenerator(BaseGenerator):
             self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
         ]
 
+        # Template settings are already set in __init__
+        # self.use_internal_template and self.format_type are instance variables
+        
         # Store data_args as instance variable for later use
-        if "Qwen3" in self.name:
-            self.data_args = DataArguments(template="qwen3", enable_thinking=self.enable_thinking)
-            self.indent = 2
-        elif "Qwen2.5" in self.name:
-            self.data_args = DataArguments(template="qwen", enable_thinking=self.enable_thinking)
-            self.indent = 2
-        elif "DeepSeek-R1" in self.name:
-            self.data_args = DataArguments(template="deepseekr1", enable_thinking=self.enable_thinking)
-            self.indent = 1
+        if self.use_internal_template:
+            if "Qwen3" in self.name:
+                self.data_args = DataArguments(template="qwen3", enable_thinking=self.enable_thinking)
+                self.indent = 2
+            elif "Qwen2.5" in self.name:
+                self.data_args = DataArguments(template="qwen", enable_thinking=self.enable_thinking)
+                self.indent = 2
+            elif "DeepSeek-R1" in self.name:
+                self.data_args = DataArguments(template="deepseekr1", enable_thinking=self.enable_thinking)
+                self.indent = 1
+            else:
+                logger.warning(f"Unknown model template for {self.name}, using default")
+                self.data_args = DataArguments(template="default", enable_thinking=self.enable_thinking)
+                self.indent = 1
         else:
-            logger.warning(f"Unknown model template for {self.name}, using default")
-            self.data_args = DataArguments(template="default", enable_thinking=self.enable_thinking)
+            # No internal template - use empty template
+            self.data_args = DataArguments(template="empty", enable_thinking=False)
             self.indent = 1
 
-        dataset_attr = DatasetAttr(
+        # Create converters for both formats
+        alpaca_attr = DatasetAttr(
             prompt="instruction",
             query="input",
             response="output",
@@ -112,8 +123,21 @@ class HFGenerator(BaseGenerator):
             formatting="alpaca",
             dataset_name="",
         )
+        
+        sharegpt_attr = DatasetAttr(
+            messages="messages",
+            role_tag="role",
+            content_tag="content",
+            user_tag="user",
+            assistant_tag="assistant",
+            system_tag="system",
+            load_from="file",
+            formatting="sharegpt",
+            dataset_name="",
+        )
 
-        self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=self.data_args)
+        self.alpaca_converter = AlpacaDatasetConverter(dataset_attr=alpaca_attr, data_args=self.data_args)
+        self.sharegpt_converter = SharegptDatasetConverter(dataset_attr=sharegpt_attr, data_args=self.data_args)
         self.template = get_template_and_fix_tokenizer(self.tokenizer, self.data_args)
 
     def _build_generation_config(
@@ -163,22 +187,36 @@ class HFGenerator(BaseGenerator):
     ) -> Union[GenOutput, List[GenOutput]]:
         # Use lock to prevent concurrent access issues
         with self._lock:
-            # Handle string input by converting to dict format
-            if isinstance(dicts, str):
-                dicts = {"instruction": "", "input": dicts, "output": ""}
-            
-            converted = self.converter(dicts)
-            prompt_msgs = converted["_prompt"]
-            response_msgs = converted["_response"]
-            messages = prompt_msgs + response_msgs
-            system = converted.get("_system", None)
-            prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
-
-            ids = prompt_ids + response_ids[:-self.indent]
-
-            text = self.tokenizer.decode(ids, skip_special_tokens=False)
-
-            ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
+            # Choose converter based on format type and template setting
+            if not self.use_internal_template:
+                # No internal template - pass through the text directly
+                if isinstance(dicts, str):
+                    text = dicts
+                else:
+                    # Extract text from dict
+                    text = dicts.get("input", "") or dicts.get("prompt", "")
+                ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
+            else:
+                # Use internal template with appropriate converter
+                if self.format_type == "sharegpt" and isinstance(dicts, dict) and "messages" in dicts:
+                    converter = self.sharegpt_converter
+                else:
+                    # Default to alpaca format
+                    converter = self.alpaca_converter
+                    # Handle string input by converting to dict format
+                    if isinstance(dicts, str):
+                        dicts = {"instruction": "", "input": dicts, "output": ""}
+                
+                converted = converter(dicts)
+                prompt_msgs = converted["_prompt"]
+                response_msgs = converted["_response"]
+                messages = prompt_msgs + response_msgs
+                system = converted.get("_system", None)
+                prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
+                
+                ids = prompt_ids + response_ids[:-self.indent]
+                text = self.tokenizer.decode(ids, skip_special_tokens=False)
+                ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
             
             # Set seed for reproducibility if provided
             if seed is not None:
@@ -232,20 +270,35 @@ class HFGenerator(BaseGenerator):
         # Process all inputs to get prompts
         all_prompt_texts = []
         for single_dict in dicts_list:
-            # Handle string input by converting to dict format
-            if isinstance(single_dict, str):
-                single_dict = {"instruction": "", "input": single_dict, "output": ""}
+            if not self.use_internal_template:
+                # No internal template - pass through the text directly
+                if isinstance(single_dict, str):
+                    text = single_dict
+                else:
+                    # Extract text from dict
+                    text = single_dict.get("input", "") or single_dict.get("prompt", "")
+                all_prompt_texts.append(text)
+            else:
+                # Use internal template with appropriate converter
+                if self.format_type == "sharegpt" and isinstance(single_dict, dict) and "messages" in single_dict:
+                    converter = self.sharegpt_converter
+                else:
+                    # Default to alpaca format
+                    converter = self.alpaca_converter
+                    # Handle string input by converting to dict format
+                    if isinstance(single_dict, str):
+                        single_dict = {"instruction": "", "input": single_dict, "output": ""}
+                    
+                converted = converter(single_dict)
+                prompt_msgs = converted["_prompt"]
+                response_msgs = converted["_response"]
+                messages = prompt_msgs + response_msgs
+                system = converted.get("_system", None)
+                prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
                 
-            converted = self.converter(single_dict)
-            prompt_msgs = converted["_prompt"]
-            response_msgs = converted["_response"]
-            messages = prompt_msgs + response_msgs
-            system = converted.get("_system", None)
-            prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
-            
-            ids = prompt_ids + response_ids[:-self.indent]
-            text = self.tokenizer.decode(ids, skip_special_tokens=False)
-            all_prompt_texts.append(text)
+                ids = prompt_ids + response_ids[:-self.indent]
+                text = self.tokenizer.decode(ids, skip_special_tokens=False)
+                all_prompt_texts.append(text)
 
         # Tokenize all prompts with padding
         batch_inputs = self.tokenizer(

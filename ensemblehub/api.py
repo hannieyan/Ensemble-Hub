@@ -98,6 +98,7 @@ class APIConfig:
         # Debug settings
         self.show_input_details = False
         self.enable_thinking = False
+        self.use_internal_template = True  # Use llamafactory templates by default
         
         # Default model specifications
         self.model_specs = [
@@ -149,7 +150,8 @@ def process_batch_conversations(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    is_from_prompt: bool = False
+    is_from_prompt: bool = False,
+    use_internal_template: bool = True
 ) -> List[Dict[str, Any]]:
     """Process multiple conversations using batch inference when possible"""
     
@@ -164,7 +166,8 @@ def process_batch_conversations(
             temperature,
             stop,
             seed,
-            is_from_prompt
+            is_from_prompt,
+            use_internal_template
         )
         results.append(result)
     
@@ -177,7 +180,8 @@ def process_single_request(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    is_from_prompt: bool = False
+    is_from_prompt: bool = False,
+    use_internal_template: bool = True
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
     
@@ -204,18 +208,32 @@ def process_single_request(
             "- Follow the expected format (e.g., ####, \\box{} code, LaTeX, markdown).\n"
         )
     
-    # Create example for ensemble
-    example = {
-        "instruction": instruction,
-        "input": user_content,
-        "output": ""
-    }
+    # Create example for ensemble based on format
+    if use_internal_template and not is_from_prompt:
+        # For chat format with internal template, pass messages
+        example = {
+            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "output": ""
+        }
+    else:
+        # For text format or no internal template, use alpaca format
+        example = {
+            "instruction": instruction,
+            "input": user_content,
+            "output": ""
+        }
     
-    # Prepare model specs with enable_thinking
+    # Prepare model specs with enable_thinking and format info
     model_specs_with_thinking = []
     for spec in api_config.model_specs:
         spec_copy = spec.copy()
         spec_copy["enable_thinking"] = api_config.enable_thinking
+        if use_internal_template:
+            # Determine format based on input type
+            spec_copy["format_type"] = "alpaca" if is_from_prompt else "sharegpt"
+        else:
+            spec_copy["format_type"] = None  # No internal template
+        spec_copy["use_internal_template"] = use_internal_template
         model_specs_with_thinking.append(spec_copy)
     
     # Prepare ensemble parameters
@@ -401,86 +419,63 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         logger.info(f"Processing {'batch' if is_batch else 'single'} request with {len(conversations)} conversation(s)")
         
         # Process conversations
-        if len(conversations) == 1:
-            # Single conversation - process directly
+        results = []
+        
+        # Helper function to process a single conversation with error handling
+        def process_with_error_handling(conversation):
             try:
-                result = process_single_request(
-                    conversations[0], 
+                return process_single_request(
+                    conversation,
                     ensemble_config,
                     req.max_tokens,
                     req.temperature,
                     req.stop,
                     req.seed,
-                    is_from_prompt
+                    is_from_prompt,
+                    api_config.use_internal_template
                 )
-                results = [result]
             except Exception as e:
-                logger.error(f"Error processing single request: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.error(f"Error processing conversation: {e}")
+                if len(conversations) == 1:
+                    # For single conversation, propagate the error
+                    raise HTTPException(status_code=500, detail=str(e))
+                else:
+                    # For batch, return error result
+                    return {
+                        "content": f"Error: {str(e)}",
+                        "finish_reason": "error",
+                        "metadata": {"error": str(e)},
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0
+                    }
+        
+        # Try batch processing if conditions are met
+        use_batch = (
+            len(conversations) > 1 and
+            ensemble_config.ensemble_method in ["simple", "loop"] and
+            ensemble_config.model_selection_method == "all"
+        )
+        
+        if use_batch:
+            logger.info("Attempting batch processing for multiple conversations")
+            try:
+                results = process_batch_conversations(
+                    conversations,
+                    ensemble_config,
+                    req.max_tokens,
+                    req.temperature,
+                    req.stop,
+                    req.seed,
+                    is_from_prompt,
+                    api_config.use_internal_template
+                )
+            except Exception as e:
+                logger.error(f"Batch processing failed: {e}, falling back to sequential")
+                # Fall back to sequential processing
+                results = [process_with_error_handling(conv) for conv in conversations]
         else:
-            # Multiple conversations - check if we can batch process
-            if ensemble_config.ensemble_method in ["simple", "loop"] and ensemble_config.model_selection_method == "all":
-                # For simple ensemble methods with all models, we can try batch processing
-                logger.info("Attempting batch processing for multiple conversations")
-                try:
-                    results = process_batch_conversations(
-                        conversations,
-                        ensemble_config,
-                        req.max_tokens,
-                        req.temperature,
-                        req.stop,
-                        req.seed,
-                        is_from_prompt
-                    )
-                except Exception as e:
-                    logger.error(f"Batch processing failed: {e}, falling back to sequential")
-                    # Fall back to sequential processing
-                    results = []
-                    for conversation in conversations:
-                        try:
-                            result = process_single_request(
-                                conversation,
-                                ensemble_config,
-                                req.max_tokens,
-                                req.temperature,
-                                req.stop,
-                                req.seed,
-                                is_from_prompt
-                            )
-                            results.append(result)
-                        except Exception as e:
-                            logger.error(f"Error processing conversation: {e}")
-                            results.append({
-                                "content": f"Error: {str(e)}",
-                                "finish_reason": "error", 
-                                "metadata": {"error": str(e)},
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0
-                            })
-            else:
-                # For complex ensemble methods, process sequentially
-                results = []
-                for conversation in conversations:
-                    try:
-                        result = process_single_request(
-                            conversation,
-                            ensemble_config,
-                            req.max_tokens,
-                            req.temperature,
-                            req.stop,
-                            req.seed,
-                            is_from_prompt
-                        )
-                        results.append(result)
-                    except Exception as e:
-                        logger.error(f"Error processing conversation: {e}")
-                        results.append({
-                            "content": f"Error: {str(e)}",
-                            "finish_reason": "error",
-                            "metadata": {"error": str(e)},
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0
-                        })
+            # Sequential processing
+            results = [process_with_error_handling(conv) for conv in conversations]
         
         # Build response
         choices = []
@@ -508,8 +503,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
             total_prompt_tokens += result["prompt_tokens"]
             total_completion_tokens += result["completion_tokens"]
         
-        # Determine response object type
-        object_type = "text_completion" if req.prompt is not None else "chat.completion"
+        # Determine response object type (OpenAI standard)
+        object_type = "text.completion" if req.prompt is not None else "chat.completion"
         
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4()}",
@@ -529,6 +524,34 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     except Exception as e:
         logger.error(f"Unexpected error in chat_completions: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/v1/completions")
+def completions(req: ChatCompletionRequest):
+    """
+    OpenAI Completions API compatible endpoint.
+    This is a separate endpoint for standard text completions.
+    """
+    # Ensure this is a text completion request
+    if req.messages is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This endpoint expects 'prompt' field, not 'messages'. Use /v1/chat/completions for chat format."
+        )
+    
+    if req.prompt is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required 'prompt' field for text completions"
+        )
+    
+    # Delegate to the main chat_completions handler
+    # It already handles both formats correctly
+    response = chat_completions(req)
+    
+    # Ensure correct object type for OpenAI compatibility
+    response.object = "text.completion"
+    
+    return response
 
 @app.post("/v1/ensemble/config")
 def update_config(
@@ -596,6 +619,7 @@ def create_app_with_config(
     show_attribution: bool = False,
     show_input_details: bool = False,
     enable_thinking: bool = False,
+    use_internal_template: bool = True,
     model_specs: str = None,
     hf_use_8bit: bool = False,
     hf_use_4bit: bool = False
@@ -646,6 +670,7 @@ def create_app_with_config(
     # Set debug flag
     api_config.show_input_details = show_input_details
     api_config.enable_thinking = enable_thinking
+    api_config.use_internal_template = use_internal_template
     
     logger.info(f"API initialized with:")
     logger.info(f"  Model selection: {model_selection_method}")
@@ -654,6 +679,7 @@ def create_app_with_config(
     logger.info(f"  Show attribution: {show_attribution}")
     logger.info(f"  Show input details: {show_input_details}")
     logger.info(f"  Enable thinking: {enable_thinking}")
+    logger.info(f"  Use internal template: {use_internal_template}")
     logger.info(f"  Models: {len(api_config.model_specs)}")
     
     return app
@@ -692,6 +718,8 @@ if __name__ == "__main__":
                        help="Show detailed input parameters in logs")
     parser.add_argument("--enable_thinking", action="store_true",
                        help="Enable thinking mode for models that support it")
+    parser.add_argument("--disable_internal_template", action="store_true",
+                       help="Disable llamafactory internal templates (default: use templates)")
     parser.add_argument("--model_specs", type=str, default=None,
                        help="Model specifications in format 'model1:engine:device,model2:engine:device'")
     
@@ -733,6 +761,7 @@ if __name__ == "__main__":
         show_attribution=args.show_attribution,
         show_input_details=args.show_input_details,
         enable_thinking=args.enable_thinking,
+        use_internal_template=not args.disable_internal_template,
         model_specs=args.model_specs,
         hf_use_8bit=args.hf_use_8bit,
         hf_use_4bit=args.hf_use_4bit
