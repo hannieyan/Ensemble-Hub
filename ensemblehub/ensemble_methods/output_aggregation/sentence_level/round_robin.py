@@ -86,6 +86,8 @@ class RoundRobinSelector(BaseSentenceAggregator):
             # Round-robin selection
             gen_idx = (rnd - 1) % len(available_gens)
             selected_generator = available_gens[gen_idx]
+            model_short = getattr(selected_generator, 'model_path', selected_generator.name).split('/')[-1]
+            logger.info(f"🔄 Round {rnd}: Using {model_short} (index {gen_idx + 1}/{len(available_gens)})")
             
             dicts = convo.render_dict()
             

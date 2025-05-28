@@ -256,7 +256,15 @@ def process_single_request(
     # Log attribution information if requested
     if ensemble_config.show_attribution and "attribution" in result:
         attribution_summary = result["attribution"].get("summary", "No summary available")
+        
+        # Enhanced attribution logging
+        selected_models = result.get("selected_models", [])
+        method = result.get("method", "unknown")
+        
+        logger.info(f"🎯 Ensemble Method: {method}")
+        logger.info(f"🔧 Available Models: {[m.split('/')[-1] for m in selected_models]}")
         logger.info(f"📝 Model Attribution: {attribution_summary}")
+        
         # Also log the generated output for visibility
         if len(output) > 200:
             # Show first 100 chars ... last 100 chars
