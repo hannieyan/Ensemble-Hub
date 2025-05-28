@@ -183,6 +183,8 @@ def process_single_request(
     """Process a single chat completion request"""
     
     logger.info("🔍 Processing single request")
+    logger.info(f"  use_internal_template parameter: {use_internal_template}")
+    logger.info(f"  api_config.use_internal_template: {api_config.use_internal_template}")
     logger.info(f"  Messages count: {len(messages)}")
     for i, msg in enumerate(messages):
         logger.info(f"  Message[{i}]: role={msg.role}, content={msg.content[:100]}...")
@@ -634,6 +636,7 @@ def create_app_with_config(
     api_config.show_input_details = show_input_details
     api_config.enable_thinking = enable_thinking
     api_config.use_internal_template = use_internal_template
+    logger.info(f"🔧 Setting api_config.use_internal_template = {use_internal_template}")
     
     logger.info(f"API initialized with:")
     logger.info(f"  Model selection: {model_selection_method}")
