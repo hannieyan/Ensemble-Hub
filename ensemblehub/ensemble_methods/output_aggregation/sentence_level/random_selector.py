@@ -52,7 +52,22 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         Run iterative random sentence selection.
         """
         available_gens = [g for g in generators]
-        convo = ConversationTemplate(example.get("instruction", ""), example.get("input", ""))
+        
+        # Handle both alpaca format (instruction/input) and messages format
+        if "messages" in example and example["messages"]:
+            # Messages format - extract user content from the last user message
+            user_messages = [msg for msg in example["messages"] if msg.get("role") == "user"]
+            if user_messages:
+                user_content = user_messages[-1].get("content", "")
+            else:
+                user_content = ""
+            # Check for system message
+            system_messages = [msg for msg in example["messages"] if msg.get("role") == "system"]
+            system_content = system_messages[0].get("content", "") if system_messages else ""
+            convo = ConversationTemplate(system_content, user_content)
+        else:
+            # Alpaca format
+            convo = ConversationTemplate(example.get("instruction", ""), example.get("input", ""))
         
         last_output = None
         repeat_count = 0
