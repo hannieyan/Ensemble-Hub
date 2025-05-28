@@ -182,8 +182,14 @@ def process_single_request(
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
     
+    logger.info("🔍 Processing single request")
+    logger.info(f"  Messages count: {len(messages)}")
+    for i, msg in enumerate(messages):
+        logger.info(f"  Message[{i}]: role={msg.role}, content={msg.content[:100]}...")
+    
     # Extract content from messages
     user_content = extract_user_content(messages)
+    logger.info(f"  Extracted user content: {user_content[:200]}...")
     
     # Find system message if any
     system_messages = [msg for msg in messages if msg.role == "system"]
@@ -193,6 +199,7 @@ def process_single_request(
         "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
         "output": ""
     }
+    logger.info(f"  Created example with messages format: {example}")
     
     # Prepare model specs with enable_thinking and format info
     model_specs_with_thinking = []
@@ -354,15 +361,19 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         
         # Handle legacy prompt field (for backward compatibility)
         if req.prompt is not None:
+            logger.info("🔄 Converting prompt field to messages format")
             if isinstance(req.prompt, str):
                 # Single prompt
                 messages_input = [Message(role="user", content=req.prompt)]
+                logger.info(f"  Single prompt converted to user message: {req.prompt[:100]}...")
             else:
                 # List of prompts - treat as batch
                 messages_input = [[Message(role="user", content=p)] for p in req.prompt]
+                logger.info(f"  Batch of {len(req.prompt)} prompts converted to messages")
         else:
             # Use messages field
             messages_input = req.messages
+            logger.info("📥 Using messages field directly")
         
         # Auto-detect batch vs single request
         is_batch = False
@@ -494,6 +505,19 @@ def completions(req: ChatCompletionRequest):
     OpenAI Completions API compatible endpoint.
     This is a separate endpoint for standard text completions.
     """
+    # Debug logging for lm-eval requests
+    logger.info("="*80)
+    logger.info("📌 /v1/completions endpoint called (lm-eval request)")
+    logger.info(f"Request prompt field: {req.prompt}")
+    logger.info(f"Request type: {type(req.prompt)}")
+    if isinstance(req.prompt, list):
+        logger.info(f"Prompt is a list with {len(req.prompt)} items")
+        for i, p in enumerate(req.prompt[:3]):  # Show first 3 prompts
+            logger.info(f"Prompt[{i}]: {p[:200]}..." if len(p) > 200 else f"Prompt[{i}]: {p}")
+    else:
+        logger.info(f"Single prompt: {req.prompt[:200]}..." if req.prompt and len(req.prompt) > 200 else f"Single prompt: {req.prompt}")
+    logger.info("="*80)
+    
     # Ensure this is a text completion request
     if req.messages is not None:
         raise HTTPException(

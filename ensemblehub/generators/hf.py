@@ -184,6 +184,17 @@ class HFGenerator(BaseGenerator):
         stop_strings: Optional[Union[str, List[str]]] = None,
         seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
+        # Debug logging
+        logger.info(f"🤖 HFGenerator.generate() called for {self.name}")
+        logger.info(f"  Input type: {type(dicts)}")
+        logger.info(f"  Use internal template: {self.use_internal_template}")
+        if isinstance(dicts, dict):
+            logger.info(f"  Dict keys: {dicts.keys()}")
+            if "messages" in dicts:
+                logger.info(f"  Messages: {dicts['messages']}")
+        elif isinstance(dicts, str):
+            logger.info(f"  String input: {dicts[:200]}...")
+        
         # Use lock to prevent concurrent access issues
         with self._lock:
             # Choose converter based on format type and template setting
@@ -208,14 +219,18 @@ class HFGenerator(BaseGenerator):
                         dicts = {"instruction": "", "input": dicts, "output": ""}
                 
                 converted = converter(dicts)
+                logger.info(f"  Converted data: {converted}")
                 prompt_msgs = converted["_prompt"]
                 response_msgs = converted["_response"]
                 messages = prompt_msgs + response_msgs
                 system = converted.get("_system", None)
+                logger.info(f"  Messages for template: {messages}")
+                logger.info(f"  System: {system}")
                 prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
                 
                 ids = prompt_ids + response_ids[:-self.indent]
                 text = self.tokenizer.decode(ids, skip_special_tokens=False)
+                logger.info(f"  Final text being sent to model: {text[:300]}...")
                 ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
             
             # Set seed for reproducibility if provided
