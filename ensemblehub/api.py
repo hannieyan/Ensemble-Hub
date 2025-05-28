@@ -148,7 +148,8 @@ def process_batch_conversations(
     max_tokens: int,
     temperature: float,
     stop: Optional[List[str]] = None,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    is_from_prompt: bool = False
 ) -> List[Dict[str, Any]]:
     """Process multiple conversations using batch inference when possible"""
     
@@ -162,7 +163,8 @@ def process_batch_conversations(
             max_tokens,
             temperature,
             stop,
-            seed
+            seed,
+            is_from_prompt
         )
         results.append(result)
     
@@ -174,7 +176,8 @@ def process_single_request(
     max_tokens: int,
     temperature: float,
     stop: Optional[List[str]] = None,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    is_from_prompt: bool = False
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
     
@@ -184,21 +187,22 @@ def process_single_request(
     # Find system message if any
     system_messages = [msg for msg in messages if msg.role == "system"]
     
-    # Default instruction with emphasis on instruction following for evaluation tasks
-    default_instruction = (
-        "You are a helpful, precise, and knowledgeable assistant. Please complete the following task "
-        "carefully and with detailed reasoning:\n\n"
-        "[Insert your task or question here]\n\n"
-        "Requirements:\n"
-        "- Be accurate and concise.\n"
-        "- Use examples if necessary.\n"
-        "- Follow the expected format (e.g., ####, \\box{} code, LaTeX, markdown).\n"
-        "- If the task involves writing, ensure clarity, logical flow, and correctness.\n"
-        "- If uncertain, explain assumptions.\n\n"
-        "Answer:"
-    )
-    
-    instruction = system_messages[0].content if system_messages else default_instruction
+    # Handle instruction based on input type
+    if system_messages:
+        # Use explicit system message if provided
+        instruction = system_messages[0].content
+    elif is_from_prompt:
+        # For prompt field, use minimal instruction to avoid interfering with user content
+        instruction = "You are a helpful assistant."
+    else:
+        # Default instruction for chat format
+        instruction = (
+            "You are a helpful, precise, and knowledgeable assistant. Please complete the following task "
+            "carefully and with detailed reasoning.\n\n"
+            "Requirements:\n"
+            "- Be accurate and concise.\n"
+            "- Follow the expected format (e.g., ####, \\box{} code, LaTeX, markdown).\n"
+        )
     
     # Create example for ensemble
     example = {
@@ -357,6 +361,7 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
             raise HTTPException(status_code=422, detail="Either 'prompt' or 'messages' field is required")
         
         # Handle legacy prompt field (for backward compatibility)
+        is_from_prompt = req.prompt is not None
         if req.prompt is not None:
             if isinstance(req.prompt, str):
                 # Single prompt
@@ -397,7 +402,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     req.max_tokens,
                     req.temperature,
                     req.stop,
-                    req.seed
+                    req.seed,
+                    is_from_prompt
                 )
                 results = [result]
             except Exception as e:
@@ -415,7 +421,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                         req.max_tokens,
                         req.temperature,
                         req.stop,
-                        req.seed
+                        req.seed,
+                        is_from_prompt
                     )
                 except Exception as e:
                     logger.error(f"Batch processing failed: {e}, falling back to sequential")
@@ -429,7 +436,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                                 req.max_tokens,
                                 req.temperature,
                                 req.stop,
-                                req.seed
+                                req.seed,
+                                is_from_prompt
                             )
                             results.append(result)
                         except Exception as e:
@@ -452,7 +460,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                             req.max_tokens,
                             req.temperature,
                             req.stop,
-                            req.seed
+                            req.seed,
+                            is_from_prompt
                         )
                         results.append(result)
                     except Exception as e:

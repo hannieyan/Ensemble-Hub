@@ -34,14 +34,13 @@ class ConversationTemplate:
 
     def render_dict(self) -> Dict[str, str]:
         """
-        Render the prompt as a dictionary. Omits 'instruction' if system prompt is None.
+        Render the prompt as a dictionary. Always includes 'instruction' key (empty string if no system prompt).
         """
         output_dict = {
+            "instruction": self.system or "",  # Always include instruction key, empty if None
             "input": self.question.strip(),
             "output": "".join(self.assistant_parts)
         }
-        if self.system:
-            output_dict["instruction"] = self.system
         return output_dict
 
     def render_list(self) -> List[Dict[str, str]]:
