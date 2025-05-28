@@ -58,7 +58,7 @@ class ChatCompletionRequest(BaseModel):
     messages: Optional[Union[List[Message], List[List[Message]]]] = Field(default=None, description="Single conversation or list of conversations")
     
     # Generation parameters
-    max_tokens: int = Field(default=256, description="Maximum tokens to generate")
+    max_tokens: int = Field(default=2048, description="Maximum tokens to generate")
     temperature: float = Field(default=1.0, description="Sampling temperature")
     stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
     stream: bool = Field(default=False, description="Stream responses")

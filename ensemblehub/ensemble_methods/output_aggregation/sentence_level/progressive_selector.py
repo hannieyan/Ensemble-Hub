@@ -153,7 +153,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
         scorers,
         example: Dict[str, Any],
         max_rounds: int = 500,
-        max_new_tokens_per_round: int = 256,
+        max_new_tokens_per_round: int = 2048,
         **kwargs
     ) -> str:
         """

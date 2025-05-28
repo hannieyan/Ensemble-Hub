@@ -131,7 +131,7 @@ class HFGenerator(BaseGenerator):
             "max_new_tokens": max_tokens,
             "pad_token_id": self.tokenizer.eos_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
-            "stop_strings": ["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
+            "stop_strings": ["</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
         }
         
         if temperature > 0:
@@ -153,7 +153,7 @@ class HFGenerator(BaseGenerator):
         self,
         dicts,
         *,
-        max_tokens=256,
+        max_tokens=2048,
         temperature=0.95,
         top_p=0.7,
         top_k=50,
@@ -219,7 +219,7 @@ class HFGenerator(BaseGenerator):
         self,
         dicts_list: List[Union[dict, str]],
         *,
-        max_tokens=256,
+        max_tokens=2048,
         temperature=0.95,
         top_p=0.7,
         top_k=50,
