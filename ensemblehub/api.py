@@ -150,7 +150,6 @@ def process_batch_conversations(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    is_from_prompt: bool = False,
     use_internal_template: bool = True
 ) -> List[Dict[str, Any]]:
     """Process multiple conversations using batch inference when possible"""
@@ -166,7 +165,6 @@ def process_batch_conversations(
             temperature,
             stop,
             seed,
-            is_from_prompt,
             use_internal_template
         )
         results.append(result)
@@ -180,7 +178,6 @@ def process_single_request(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    is_from_prompt: bool = False,
     use_internal_template: bool = True
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
@@ -191,48 +188,17 @@ def process_single_request(
     # Find system message if any
     system_messages = [msg for msg in messages if msg.role == "system"]
     
-    # Handle instruction based on input type
-    if system_messages:
-        # Use explicit system message if provided
-        instruction = system_messages[0].content
-    elif is_from_prompt:
-        # For prompt field, use minimal instruction to avoid interfering with user content
-        instruction = "You are a helpful assistant."
-    else:
-        # Default instruction for chat format
-        instruction = (
-            "You are a helpful, precise, and knowledgeable assistant. Please complete the following task "
-            "carefully and with detailed reasoning.\n\n"
-            "Requirements:\n"
-            "- Be accurate and concise.\n"
-            "- Follow the expected format (e.g., ####, \\box{} code, LaTeX, markdown).\n"
-        )
-    
-    # Create example for ensemble based on format
-    if use_internal_template and not is_from_prompt:
-        # For chat format with internal template, pass messages
-        example = {
-            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
-            "output": ""
-        }
-    else:
-        # For text format or no internal template, use alpaca format
-        example = {
-            "instruction": instruction,
-            "input": user_content,
-            "output": ""
-        }
+    # Create example - let HFGenerator decide the format based on content
+    example = {
+        "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+        "output": ""
+    }
     
     # Prepare model specs with enable_thinking and format info
     model_specs_with_thinking = []
     for spec in api_config.model_specs:
         spec_copy = spec.copy()
         spec_copy["enable_thinking"] = api_config.enable_thinking
-        if use_internal_template:
-            # Determine format based on input type
-            spec_copy["format_type"] = "alpaca" if is_from_prompt else "sharegpt"
-        else:
-            spec_copy["format_type"] = None  # No internal template
         spec_copy["use_internal_template"] = use_internal_template
         model_specs_with_thinking.append(spec_copy)
     
@@ -387,7 +353,6 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
             raise HTTPException(status_code=422, detail="Either 'prompt' or 'messages' field is required")
         
         # Handle legacy prompt field (for backward compatibility)
-        is_from_prompt = req.prompt is not None
         if req.prompt is not None:
             if isinstance(req.prompt, str):
                 # Single prompt
@@ -431,7 +396,6 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     req.temperature,
                     req.stop,
                     req.seed,
-                    is_from_prompt,
                     api_config.use_internal_template
                 )
             except Exception as e:
@@ -466,7 +430,6 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     req.temperature,
                     req.stop,
                     req.seed,
-                    is_from_prompt,
                     api_config.use_internal_template
                 )
             except Exception as e:
@@ -544,13 +507,9 @@ def completions(req: ChatCompletionRequest):
             detail="Missing required 'prompt' field for text completions"
         )
     
-    # Delegate to the main chat_completions handler
-    # It already handles both formats correctly
+    # Process text completion request
     response = chat_completions(req)
-    
-    # Ensure correct object type for OpenAI compatibility
     response.object = "text.completion"
-    
     return response
 
 @app.post("/v1/ensemble/config")
@@ -587,26 +546,6 @@ def get_config():
         "default_ensemble_config": api_config.default_ensemble_config.model_dump()
     }
 
-@app.post("/v1/loop/completions")  
-def loop_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
-    """
-    Dedicated endpoint for loop (round-robin) ensemble without model selection.
-    This endpoint forces the use of round-robin cycling through all available models.
-    """
-    # Override ensemble config for loop inference
-    loop_config = EnsembleConfig(
-        ensemble_method="loop",
-        model_selection_method="all",  # Use all models, no selection
-        show_attribution=True,
-        max_rounds=req.ensemble_config.max_rounds if req.ensemble_config else 500,
-        score_threshold=req.ensemble_config.score_threshold if req.ensemble_config else -2.0
-    )
-    
-    # Replace the request's ensemble config
-    req.ensemble_config = loop_config
-    
-    # Use the main chat completions handler
-    return chat_completions(req)
 
 def create_app_with_config(
     model_selection_method: str = "all",

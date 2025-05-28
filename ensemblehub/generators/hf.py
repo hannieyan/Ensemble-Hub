@@ -28,7 +28,7 @@ logger = logging.getLogger("ensemble_inference")
 class HFGenerator(BaseGenerator):
     """HuggingFace Transformers-based text generator"""
     
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, use_internal_template: bool = True, format_type: str = "alpaca", **model_kwargs):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, use_internal_template: bool = True, **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         
         # Memory optimization parameters
@@ -79,7 +79,6 @@ class HFGenerator(BaseGenerator):
         self.name = path
         self.enable_thinking = enable_thinking
         self.use_internal_template = use_internal_template
-        self.format_type = format_type
         self._lock = threading.Lock()  # Thread safety for concurrent access
         self.__post_init__()
     
@@ -198,10 +197,11 @@ class HFGenerator(BaseGenerator):
                 ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
             else:
                 # Use internal template with appropriate converter
-                if self.format_type == "sharegpt" and isinstance(dicts, dict) and "messages" in dicts:
+                if isinstance(dicts, dict) and "messages" in dicts:
+                    # Has messages field - use sharegpt format
                     converter = self.sharegpt_converter
                 else:
-                    # Default to alpaca format
+                    # Use alpaca format (for instruction/input or string input)
                     converter = self.alpaca_converter
                     # Handle string input by converting to dict format
                     if isinstance(dicts, str):
@@ -280,10 +280,11 @@ class HFGenerator(BaseGenerator):
                 all_prompt_texts.append(text)
             else:
                 # Use internal template with appropriate converter
-                if self.format_type == "sharegpt" and isinstance(single_dict, dict) and "messages" in single_dict:
+                if isinstance(single_dict, dict) and "messages" in single_dict:
+                    # Has messages field - use sharegpt format
                     converter = self.sharegpt_converter
                 else:
-                    # Default to alpaca format
+                    # Use alpaca format (for instruction/input or string input)
                     converter = self.alpaca_converter
                     # Handle string input by converting to dict format
                     if isinstance(single_dict, str):
