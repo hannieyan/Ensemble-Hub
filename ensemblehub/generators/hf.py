@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import List, Optional, Union
 
 import torch
@@ -77,6 +78,7 @@ class HFGenerator(BaseGenerator):
             
         self.name = path
         self.enable_thinking = enable_thinking
+        self._lock = threading.Lock()  # Thread safety for concurrent access
         self.__post_init__()
     
 
@@ -114,6 +116,38 @@ class HFGenerator(BaseGenerator):
         self.converter = AlpacaDatasetConverter(dataset_attr=dataset_attr, data_args=self.data_args)
         self.template = get_template_and_fix_tokenizer(self.tokenizer, self.data_args)
 
+    def _build_generation_config(
+        self, 
+        temperature: float,
+        max_tokens: int,
+        top_p: float = 0.7,
+        top_k: int = 50,
+        repetition_penalty: float = 1.0,
+        stop_strings: Optional[Union[str, List[str]]] = None
+    ) -> GenerationConfig:
+        """Build generation config based on temperature and other parameters"""
+        base_config = {
+            "repetition_penalty": repetition_penalty,
+            "max_new_tokens": max_tokens,
+            "pad_token_id": self.tokenizer.eos_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "stop_strings": ["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
+        }
+        
+        if temperature > 0:
+            # Sampling mode
+            base_config.update({
+                "do_sample": True,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+            })
+        else:
+            # Deterministic mode (temperature=0)
+            base_config["do_sample"] = False
+            
+        return GenerationConfig(**base_config)
+
     @torch.inference_mode()
     def generate(
         self,
@@ -127,59 +161,58 @@ class HFGenerator(BaseGenerator):
         stop_strings: Optional[Union[str, List[str]]] = None,
         seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
+        # Use lock to prevent concurrent access issues
+        with self._lock:
+            # Handle string input by converting to dict format
+            if isinstance(dicts, str):
+                dicts = {"instruction": "", "input": dicts, "output": ""}
+            
+            converted = self.converter(dicts)
+            prompt_msgs = converted["_prompt"]
+            response_msgs = converted["_response"]
+            messages = prompt_msgs + response_msgs
+            system = converted.get("_system", None)
+            prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
 
-        # Handle string input by converting to dict format
-        if isinstance(dicts, str):
-            dicts = {"instruction": "", "input": dicts, "output": ""}
-        
-        converted = self.converter(dicts)
-        prompt_msgs = converted["_prompt"]
-        response_msgs = converted["_response"]
-        messages = prompt_msgs + response_msgs
-        system = converted.get("_system", None)
-        prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
+            ids = prompt_ids + response_ids[:-self.indent]
 
-        ids = prompt_ids + response_ids[:-self.indent]
+            text = self.tokenizer.decode(ids, skip_special_tokens=False)
 
-        text = self.tokenizer.decode(ids, skip_special_tokens=False)
+            ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
+            
+            # Set seed for reproducibility if provided
+            if seed is not None:
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+            
+            # Build generation config using shared method
+            cfg = self._build_generation_config(
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                stop_strings=stop_strings
+            )
+            out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
 
-        ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
-        
-        # Set seed for reproducibility if provided
-        if seed is not None:
-            torch.manual_seed(seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
-        
-        cfg = GenerationConfig(
-            do_sample=True if temperature > 0 else False,  # Disable sampling for temperature=0
-            temperature=temperature if temperature > 0 else 1.0,
-            top_p=top_p,
-            top_k=top_k,
-            repetition_penalty=repetition_penalty,
-            max_new_tokens=max_tokens,
-            pad_token_id=self.tokenizer.eos_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            stop_strings=["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
-        )
-        out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
+            # Check if the output contains the EOS token and stop_strings
+            generated_ids = out[len(ids["input_ids"][0]):]
+            ended = self.tokenizer.eos_token_id in generated_ids.tolist()
 
-        # Check if the output contains the EOS token and stop_strings
-        generated_ids = out[len(ids["input_ids"][0]):]
-        ended = self.tokenizer.eos_token_id in generated_ids.tolist()
+            txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
 
-        txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
+            if stop_strings:
+                if isinstance(stop_strings, str):
+                    stop_strings = [stop_strings]
+                for s in stop_strings:
+                    if s in txt:
+                        txt = txt.split(s)[0]
+                        ended = True
+                        break
 
-        if stop_strings:
-            if isinstance(stop_strings, str):
-                stop_strings = [stop_strings]
-            for s in stop_strings:
-                if s in txt:
-                    txt = txt.split(s)[0]
-                    ended = True
-                    break
-
-        return GenOutput(trim_text(txt) if not ended else txt, ended)
+            return GenOutput(trim_text(txt) if not ended else txt, ended)
 
     @torch.inference_mode()
     def batch_generate(
@@ -223,16 +256,14 @@ class HFGenerator(BaseGenerator):
             max_length=self.data_args.cutoff_len
         ).to(self.device)
 
-        cfg = GenerationConfig(
-            do_sample=True,
+        # Build generation config using shared method
+        cfg = self._build_generation_config(
             temperature=temperature,
+            max_tokens=max_tokens,
             top_p=top_p,
             top_k=top_k,
             repetition_penalty=repetition_penalty,
-            max_new_tokens=max_tokens,
-            pad_token_id=self.tokenizer.eos_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            stop_strings=["Question:", "</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
+            stop_strings=stop_strings
         )
         
         # Generate for all inputs at once

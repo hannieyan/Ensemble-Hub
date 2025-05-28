@@ -142,6 +142,32 @@ def extract_user_content(messages: List[Message]) -> str:
     
     return user_messages[-1].content
 
+def process_batch_conversations(
+    conversations: List[List[Message]],
+    ensemble_config: EnsembleConfig,
+    max_tokens: int,
+    temperature: float,
+    stop: Optional[List[str]] = None,
+    seed: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Process multiple conversations using batch inference when possible"""
+    
+    # For now, we'll just process sequentially
+    # In the future, this could be enhanced to use actual batch inference
+    results = []
+    for conversation in conversations:
+        result = process_single_request(
+            conversation,
+            ensemble_config,
+            max_tokens,
+            temperature,
+            stop,
+            seed
+        )
+        results.append(result)
+    
+    return results
+
 def process_single_request(
     messages: List[Message], 
     ensemble_config: EnsembleConfig,
@@ -378,34 +404,66 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                 logger.error(f"Error processing single request: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         else:
-            # Multiple conversations - process in parallel
-            def process_conversation(conv_with_index):
-                idx, conversation = conv_with_index
+            # Multiple conversations - check if we can batch process
+            if ensemble_config.ensemble_method in ["simple", "loop"] and ensemble_config.model_selection_method == "all":
+                # For simple ensemble methods with all models, we can try batch processing
+                logger.info("Attempting batch processing for multiple conversations")
                 try:
-                    return idx, process_single_request(
-                        conversation,
-                        ensemble_config, 
+                    results = process_batch_conversations(
+                        conversations,
+                        ensemble_config,
                         req.max_tokens,
                         req.temperature,
                         req.stop,
                         req.seed
                     )
                 except Exception as e:
-                    logger.error(f"Error processing conversation {idx}: {e}")
-                    return idx, {
-                        "content": f"Error: {str(e)}",
-                        "finish_reason": "error",
-                        "metadata": {"error": str(e)},
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0
-                    }
-            
-            with ThreadPoolExecutor(max_workers=min(len(conversations), 4)) as executor:
-                indexed_results = list(executor.map(process_conversation, enumerate(conversations)))
-            
-            # Sort results by original index
-            indexed_results.sort(key=lambda x: x[0])
-            results = [result for _, result in indexed_results]
+                    logger.error(f"Batch processing failed: {e}, falling back to sequential")
+                    # Fall back to sequential processing
+                    results = []
+                    for conversation in conversations:
+                        try:
+                            result = process_single_request(
+                                conversation,
+                                ensemble_config,
+                                req.max_tokens,
+                                req.temperature,
+                                req.stop,
+                                req.seed
+                            )
+                            results.append(result)
+                        except Exception as e:
+                            logger.error(f"Error processing conversation: {e}")
+                            results.append({
+                                "content": f"Error: {str(e)}",
+                                "finish_reason": "error", 
+                                "metadata": {"error": str(e)},
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0
+                            })
+            else:
+                # For complex ensemble methods, process sequentially
+                results = []
+                for conversation in conversations:
+                    try:
+                        result = process_single_request(
+                            conversation,
+                            ensemble_config,
+                            req.max_tokens,
+                            req.temperature,
+                            req.stop,
+                            req.seed
+                        )
+                        results.append(result)
+                    except Exception as e:
+                        logger.error(f"Error processing conversation: {e}")
+                        results.append({
+                            "content": f"Error: {str(e)}",
+                            "finish_reason": "error",
+                            "metadata": {"error": str(e)},
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0
+                        })
         
         # Build response
         choices = []
@@ -428,7 +486,7 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                 # Standard chat completion format
                 choice.message = Message(role="assistant", content=result["content"])
                 choice.text = None
-            
+
             choices.append(choice)
             total_prompt_tokens += result["prompt_tokens"]
             total_completion_tokens += result["completion_tokens"]
