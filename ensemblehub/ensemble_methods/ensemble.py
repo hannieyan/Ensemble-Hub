@@ -212,7 +212,7 @@ class EnsembleFramework:
             **kwargs
             )
             
-            logger.info("✅ Output aggregation completed")
+            logger.info(f"✅ Output aggregation completed")
         else:
             logger.info("⏭️  Skipping output aggregation, using first model")
             # Simple fallback: use first selected model
