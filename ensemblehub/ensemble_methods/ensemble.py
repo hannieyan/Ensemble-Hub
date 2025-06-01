@@ -183,7 +183,7 @@ class EnsembleFramework:
             logger.info("⏭️  Skipping model selection, using all models")
         
         # Stage 2: Output Generation/Aggregation
-        if self.config.use_output_aggregation and self.output_aggregator:
+        if self.config.use_output_aggregation and self.output_aggregator and (len(selected_specs) > 1):
             logger.info(f"🔗 Stage 2: Output Aggregation ({self.config.aggregation_method} - {self.config.aggregation_level})")
             
             # Get generators for selected models
@@ -213,8 +213,8 @@ class EnsembleFramework:
             )
             
             logger.info(f"✅ Output aggregation completed")
-        else:
-            logger.info("⏭️  Skipping output aggregation, using first model")
+        elif len(selected_specs) == 1:
+            logger.info("⏭️  Skipping output aggregation, using only one model")
             # Simple fallback: use first selected model
             if hasattr(generators, 'get_generator'):
                 first_gen = generators.get_generator(
@@ -228,14 +228,50 @@ class EnsembleFramework:
             else:
                 first_gen = generators[0]
             
-            # Generate simple output
-            from ...conversation import ConversationTemplate
-            question = example.get("instruction", "") + " " + example.get("input", "")
-            conversation = ConversationTemplate("You are a helpful assistant.", question)
-            prompt = conversation.render()
+            # Generate simple output - pass the original example format
+            # The generator will handle the format conversion internally
+            
+            # Determine max_tokens based on generator type and model capabilities
+            default_max_tokens = 256  # fallback default
+            
+            # Check generator type and get max tokens accordingly
+            if hasattr(first_gen, '__class__'):
+                gen_class_name = first_gen.__class__.__name__
+                logger.info(f"Generator type: {gen_class_name}")
+                
+                if gen_class_name == "HFGenerator" and hasattr(first_gen, 'tokenizer'):
+                    # For HuggingFace models, try to get model_max_length
+                    if hasattr(first_gen.tokenizer, 'model_max_length'):
+                        model_max_length = first_gen.tokenizer.model_max_length
+                        if model_max_length and model_max_length < 1000000:  # Sanity check
+                            # Use 75% of model max length for generation
+                            default_max_tokens = int(model_max_length * 0.75)
+                            logger.info(f"Single model: Using max_tokens={default_max_tokens} (75% of HF model max length {model_max_length})")
+                        else:
+                            default_max_tokens = 32768
+                            logger.info(f"Single model: Using safe max_tokens={default_max_tokens} (HF model max length unreasonable)")
+                    else:
+                        default_max_tokens = 32768
+                        logger.info(f"Single model: Using default max_tokens={default_max_tokens} (HF model max length not available)")
+                
+                elif gen_class_name == "VLLMGenerator":
+                    # For vLLM models, they typically support longer contexts
+                    # vLLM internally handles max tokens well, so we can use a large default
+                    default_max_tokens = 32768
+                    logger.info(f"Single model: Using max_tokens={default_max_tokens} for vLLM generator")
+                
+                else:
+                    # Unknown generator type, use a reasonable default
+                    default_max_tokens = 16384
+                    logger.info(f"Single model: Using default max_tokens={default_max_tokens} for {gen_class_name}")
+            else:
+                # Can't determine generator type
+                default_max_tokens = 16384
+                logger.info(f"Single model: Using fallback max_tokens={default_max_tokens}")
+            
             # Prepare generation parameters
             gen_kwargs = {
-                "max_tokens": kwargs.get("max_tokens", 256),
+                "max_tokens": kwargs.get("max_tokens", default_max_tokens),
                 "temperature": kwargs.get("temperature", 0.95),
                 "top_p": kwargs.get("top_p", 0.7),
             }
@@ -244,8 +280,15 @@ class EnsembleFramework:
             if "stop_strings" in kwargs:
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
             
-            result = first_gen.generate({"prompt": prompt}, **gen_kwargs)
+            # Pass the example directly to the generator
+            # The generator will handle the format conversion based on the input
+            # It will automatically choose between alpaca and sharegpt format
+            result = first_gen.generate(example, **gen_kwargs)
             output = result.text
+        else:
+            # No models selected
+            logger.error("No models selected for generation")
+            output = ""
         
         # Get model attribution data if available
         attribution_data = None

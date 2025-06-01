@@ -150,7 +150,8 @@ def process_batch_conversations(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    use_internal_template: bool = True
+    use_internal_template: bool = True,
+    is_chat: bool = True
 ) -> List[Dict[str, Any]]:
     """Process multiple conversations using batch inference when possible"""
     
@@ -165,7 +166,8 @@ def process_batch_conversations(
             temperature,
             stop,
             seed,
-            use_internal_template
+            use_internal_template,
+            is_chat
         )
         results.append(result)
     
@@ -178,7 +180,8 @@ def process_single_request(
     temperature: float,
     stop: Optional[List[str]] = None,
     seed: Optional[int] = None,
-    use_internal_template: bool = True
+    use_internal_template: bool = True,
+    is_chat: bool = True
 ) -> Dict[str, Any]:
     """Process a single chat completion request"""
     
@@ -196,12 +199,24 @@ def process_single_request(
     # Find system message if any
     system_messages = [msg for msg in messages if msg.role == "system"]
     
-    # Create example - let HFGenerator decide the format based on content
-    example = {
-        "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
-        "output": ""
-    }
-    logger.info(f"  Created example with messages format: {example}")
+    # Create example - use different format based on request type
+    # For text completion (not chat), use alpaca format
+    # For chat completion, use messages format
+    if not is_chat:
+        # Text completion - use alpaca format
+        example = {
+            "instruction": "",  # No system prompt for text completion
+            "input": user_content,
+            "output": ""
+        }
+        logger.info(f"  Created example with alpaca format for text completion: {example}")
+    else:
+        # Chat completion - use messages format
+        example = {
+            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "output": ""
+        }
+        logger.info(f"  Created example with messages format for chat completion: {example}")
     
     # Prepare model specs with enable_thinking and format info
     model_specs_with_thinking = []
@@ -409,7 +424,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     req.temperature,
                     req.stop,
                     req.seed,
-                    api_config.use_internal_template
+                    api_config.use_internal_template,
+                    is_chat=(req.prompt is None)  # is_chat=False for text completion
                 )
             except Exception as e:
                 logger.error(f"Error processing conversation: {e}")
@@ -443,7 +459,8 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     req.temperature,
                     req.stop,
                     req.seed,
-                    api_config.use_internal_template
+                    api_config.use_internal_template,
+                    is_chat=(req.prompt is None)  # is_chat=False for text completion
                 )
             except Exception as e:
                 logger.error(f"Batch processing failed: {e}, falling back to sequential")
