@@ -15,11 +15,6 @@ from transformers import (
     GenerationConfig,
 )
 
-from llamafactory.data.template import get_template_and_fix_tokenizer
-from llamafactory.hparams import DataArguments
-from llamafactory.data.converter import AlpacaDatasetConverter, SharegptDatasetConverter
-from llamafactory.data.parser import DatasetAttr
-
 from .base import BaseGenerator, GenOutput, STOP_TOKENS_TEXT, trim_text
 
 logger = logging.getLogger("ensemble_inference")
@@ -28,7 +23,7 @@ logger = logging.getLogger("ensemble_inference")
 class HFGenerator(BaseGenerator):
     """HuggingFace Transformers-based text generator"""
     
-    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, use_internal_template: bool = True, **model_kwargs):
+    def __init__(self, path: str, *, device: str = "auto", dtype: torch.dtype = torch.bfloat16, quantization: str = "none", enable_thinking: bool = True, **model_kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         
         # Memory optimization parameters
@@ -78,69 +73,18 @@ class HFGenerator(BaseGenerator):
             
         self.name = path
         self.enable_thinking = enable_thinking
-        self.use_internal_template = use_internal_template
         self._lock = threading.Lock()  # Thread safety for concurrent access
         self.__post_init__()
     
 
     def __post_init__(self):
-        """Initialize template and converter after model loading"""
+        """Initialize after model loading"""
         # Optional stop string list
         self.stop_strings = list(STOP_TOKENS_TEXT) + [
             self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
         ]
-
-        # Template settings are already set in __init__
-        # self.use_internal_template and self.format_type are instance variables
         
-        logger.info(f"🏗️  HFGenerator {self.name} initialized with use_internal_template={self.use_internal_template}")
-        
-        # Store data_args as instance variable for later use
-        if self.use_internal_template:
-            if "Qwen3" in self.name:
-                self.data_args = DataArguments(template="qwen3", enable_thinking=self.enable_thinking)
-                self.indent = 2
-            elif "Qwen2.5" in self.name:
-                self.data_args = DataArguments(template="qwen", enable_thinking=self.enable_thinking)
-                self.indent = 2
-            elif "DeepSeek-R1" in self.name:
-                self.data_args = DataArguments(template="deepseekr1", enable_thinking=self.enable_thinking)
-                self.indent = 1
-            else:
-                logger.warning(f"Unknown model template for {self.name}, using default")
-                self.data_args = DataArguments(template="default", enable_thinking=self.enable_thinking)
-                self.indent = 1
-        else:
-            # No internal template - use empty template
-            logger.info(f"🚫 Using empty template for {self.name}")
-            self.data_args = DataArguments(template="empty", enable_thinking=False)
-            self.indent = 1
-
-        # Create converters for both formats
-        alpaca_attr = DatasetAttr(
-            prompt="instruction",
-            query="input",
-            response="output",
-            load_from="file",
-            formatting="alpaca",
-            dataset_name="",
-        )
-        
-        sharegpt_attr = DatasetAttr(
-            messages="messages",
-            role_tag="role",
-            content_tag="content",
-            user_tag="user",
-            assistant_tag="assistant",
-            system_tag="system",
-            load_from="file",
-            formatting="sharegpt",
-            dataset_name="",
-        )
-
-        self.alpaca_converter = AlpacaDatasetConverter(dataset_attr=alpaca_attr, data_args=self.data_args)
-        self.sharegpt_converter = SharegptDatasetConverter(dataset_attr=sharegpt_attr, data_args=self.data_args)
-        self.template = get_template_and_fix_tokenizer(self.tokenizer, self.data_args)
+        logger.info(f"🏗️  HFGenerator {self.name} initialized")
 
     def _build_generation_config(
         self, 
@@ -177,7 +121,8 @@ class HFGenerator(BaseGenerator):
     @torch.inference_mode()
     def generate(
         self,
-        dicts,
+        inputs: List,
+        is_chat,
         *,
         max_tokens=256,
         temperature=0.95,
@@ -187,59 +132,27 @@ class HFGenerator(BaseGenerator):
         stop_strings: Optional[Union[str, List[str]]] = None,
         seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
-        # Debug logging
-        logger.info(f"🤖 HFGenerator.generate() called for {self.name}")
-        logger.info(f"  Input type: {type(dicts)}")
-        logger.info(f"  Use internal template: {self.use_internal_template}")
-        if isinstance(dicts, dict):
-            logger.info(f"  Dict keys: {dicts.keys()}")
-            if "messages" in dicts:
-                logger.info(f"  Messages: {dicts['messages']}")
-        elif isinstance(dicts, str):
-            logger.info(f"  String input: {dicts[:200]}...")
         
         # Use lock to prevent concurrent access issues
         with self._lock:
-            # Choose converter based on format type and template setting
-            if not self.use_internal_template:
-                # No internal template - pass through the text directly
-                logger.info(f"  🚫 Using no template - direct text processing")
-                if isinstance(dicts, str):
-                    text = dicts
-                else:
-                    # Extract text from dict
-                    text = dicts.get("input", "") or dicts.get("prompt", "")
-                logger.info(f"  📝 Direct text: {text[:200]}...")
-                ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
+            # Auto-detect format: if input has "prompt" field, it's text completion
+            if not is_chat:
+                # Text completion mode - use raw prompt without template
+                logger.info(f"  Raw prompt: {inputs[0][:200]}...")
+                ids = self.tokenizer(inputs, return_tensors="pt", padding=True).to(self.device)
             else:
-                # Use internal template with appropriate converter
-                logger.info(f"  🏗️  Using internal template processing")
-                if isinstance(dicts, dict) and "messages" in dicts:
-                    # Has messages field - use sharegpt format
-                    logger.info(f"  📋 Using sharegpt converter")
-                    converter = self.sharegpt_converter
-                else:
-                    # Use alpaca format (for instruction/input or string input)
-                    logger.info(f"  🦙 Using alpaca converter")
-                    converter = self.alpaca_converter
-                    # Handle string input by converting to dict format
-                    if isinstance(dicts, str):
-                        dicts = {"instruction": "", "input": dicts, "output": ""}
-                
-                converted = converter(dicts)
-                logger.info(f"  Converted data: {converted}")
-                prompt_msgs = converted["_prompt"]
-                response_msgs = converted["_response"]
-                messages = prompt_msgs + response_msgs
-                system = converted.get("_system", None)
-                logger.info(f"  Messages for template: {messages}")
-                logger.info(f"  System: {system}")
-                prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
-                
-                ids = prompt_ids + response_ids[:-self.indent]
-                text = self.tokenizer.decode(ids, skip_special_tokens=False)
-                logger.info(f"  Final text being sent to model: {text[:300]}...")
-                ids = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=self.data_args.cutoff_len).to(self.device)
+                # Chat completion mode - use apply_chat_template
+                logger.info(f"  Messages: {inputs[0]}")
+                # Check if tokenizer supports enable_thinking
+                ids = self.tokenizer.apply_chat_template(
+                    inputs,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    padding=True,
+                    enable_thinking=self.enable_thinking,
+                    return_tensors="pt",
+                    continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
+                ).to(self.device)
             
             # Set seed for reproducibility if provided
             if seed is not None:
@@ -256,117 +169,41 @@ class HFGenerator(BaseGenerator):
                 repetition_penalty=repetition_penalty,
                 stop_strings=stop_strings
             )
-            out = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)[0]
+            outputs = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)
 
-            # Check if the output contains the EOS token and stop_strings
-            generated_ids = out[len(ids["input_ids"][0]):]
-            ended = self.tokenizer.eos_token_id in generated_ids.tolist()
+            # Process each output in the batch
+            results = []
+            batch_size = outputs.shape[0]
 
-            txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
+            for i in range(batch_size):
+                # Get input length for this sample
+                input_length = ids["input_ids"][i].shape[0]
 
-            if stop_strings:
-                if isinstance(stop_strings, str):
-                    stop_strings = [stop_strings]
-                for s in stop_strings:
-                    if s in txt:
-                        txt = txt.split(s)[0]
-                        ended = True
-                        break
+                # Extract generated tokens for this sample
+                output_ids = outputs[i]  # Shape: [seq_len]
+                generated_ids = output_ids[input_length:]
 
-            return GenOutput(trim_text(txt) if not ended else txt, ended)
+                # Check if generation ended with EOS
+                ended = self.tokenizer.eos_token_id in generated_ids.tolist()
 
-    @torch.inference_mode()
-    def batch_generate(
-        self,
-        dicts_list: List[Union[dict, str]],
-        *,
-        max_tokens=256,
-        temperature=0.95,
-        top_p=0.7,
-        top_k=50,
-        repetition_penalty=1.0,
-        stop_strings: Optional[Union[str, List[str]]] = None,
-    ) -> List[GenOutput]:
-        """
-        Batch generation for multiple inputs.
-        """
-        # Process all inputs to get prompts
-        all_prompt_texts = []
-        for single_dict in dicts_list:
-            if not self.use_internal_template:
-                # No internal template - pass through the text directly
-                if isinstance(single_dict, str):
-                    text = single_dict
-                else:
-                    # Extract text from dict
-                    text = single_dict.get("input", "") or single_dict.get("prompt", "")
-                all_prompt_texts.append(text)
-            else:
-                # Use internal template with appropriate converter
-                if isinstance(single_dict, dict) and "messages" in single_dict:
-                    # Has messages field - use sharegpt format
-                    converter = self.sharegpt_converter
-                else:
-                    # Use alpaca format (for instruction/input or string input)
-                    converter = self.alpaca_converter
-                    # Handle string input by converting to dict format
-                    if isinstance(single_dict, str):
-                        single_dict = {"instruction": "", "input": single_dict, "output": ""}
-                    
-                converted = converter(single_dict)
-                prompt_msgs = converted["_prompt"]
-                response_msgs = converted["_response"]
-                messages = prompt_msgs + response_msgs
-                system = converted.get("_system", None)
-                prompt_ids, response_ids = self.template.encode_oneturn(tokenizer=self.tokenizer, messages=messages, system=system)
-                
-                ids = prompt_ids + response_ids[:-self.indent]
-                text = self.tokenizer.decode(ids, skip_special_tokens=False)
-                all_prompt_texts.append(text)
+                # Decode the generated text
+                txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
 
-        # Tokenize all prompts with padding
-        batch_inputs = self.tokenizer(
-            all_prompt_texts, 
-            return_tensors="pt", 
-            padding=True, 
-            truncation=True,
-            max_length=self.data_args.cutoff_len
-        ).to(self.device)
+                # Handle stop strings
+                if stop_strings:
+                    s_list = [stop_strings] if isinstance(stop_strings, str) else stop_strings
+                    for s in s_list:
+                        if s in txt:
+                            txt = txt.split(s)[0]
+                            ended = True
+                            break
 
-        # Build generation config using shared method
-        cfg = self._build_generation_config(
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            top_k=top_k,
-            repetition_penalty=repetition_penalty,
-            stop_strings=stop_strings
-        )
-        
-        # Generate for all inputs at once
-        outputs = self.model.generate(**batch_inputs, generation_config=cfg, tokenizer=self.tokenizer)
+                # Add result
+                results.append(GenOutput(trim_text(txt) if not ended else txt, ended))
 
-        # Process outputs
-        results = []
-        for i, output in enumerate(outputs):
-            input_length = len(batch_inputs["input_ids"][i])
-            generated_ids = output[input_length:]
-            ended = self.tokenizer.eos_token_id in generated_ids.tolist()
+            # 永远返回列表
+            return results
 
-            txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
-
-            if stop_strings:
-                if isinstance(stop_strings, str):
-                    stop_strings = [stop_strings]
-                for s in stop_strings:
-                    if s in txt:
-                        txt = txt.split(s)[0]
-                        ended = True
-                        break
-
-            results.append(GenOutput(trim_text(txt) if not ended else txt, ended))
-
-        return results
 
 
     @torch.inference_mode()

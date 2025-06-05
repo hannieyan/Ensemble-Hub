@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 import re
 
 from .base import BaseSentenceAggregator, ModelAttribution
-from ....conversation import ConversationTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -151,9 +150,10 @@ class ProgressiveSelector(BaseSentenceAggregator):
         self,
         generators: List,
         scorers,
-        example: Dict[str, Any],
+        example,
         max_rounds: int = 500,
         max_new_tokens_per_round: int = 256,
+        is_chat: bool = True,
         **kwargs
     ) -> str:
         """
@@ -161,48 +161,32 @@ class ProgressiveSelector(BaseSentenceAggregator):
         """
         if not generators:
             return ""
-        
-        # Handle both alpaca format (instruction/input) and messages format
-        if "messages" in example and example["messages"]:
-            # Messages format - extract user content from the last user message
-            user_messages = [msg for msg in example["messages"] if msg.get("role") == "user"]
-            if user_messages:
-                user_content = user_messages[-1].get("content", "")
-            else:
-                user_content = ""
-            # Check for system message
-            system_messages = [msg for msg in example["messages"] if msg.get("role") == "system"]
-            system_content = system_messages[0].get("content", "") if system_messages else ""
-            convo = ConversationTemplate(system_content, user_content)
-        else:
-            # Alpaca format
-            convo = ConversationTemplate(example.get("instruction", ""), example.get("input", ""))
-        
+
+        print(example)
+
+        # Track state
+        prompt = example
         last_output = None
         repeat_count = 0
         current_generated_text = ""
         self.attribution = ModelAttribution()  # Reset attribution for new generation
         
         for rnd in range(1, max_rounds + 1):
-            prompt = convo.render()
-            
-            # Check total length limits
-            tok = getattr(generators[0], "tokenizer", None)
-            if tok is not None:
-                total_length = tok(prompt, return_tensors="pt").input_ids.size(1)
-                if total_length > 32768:
-                    logger.warning(f"Early stop: total prompt length {total_length} > 32768")
-                    break
             
             # Filter generators by length constraints
             available_gens = []
             for g in generators:
-                tok = getattr(g, "tokenizer", None)
-                if tok is not None:
-                    length = tok(prompt, return_tensors="pt").input_ids.size(1)
-                    if length <= getattr(tok, 'model_max_length', 32768):
-                        available_gens.append(g)
+                tokenizer = getattr(g, "tokenizer", None)
+                if is_chat:
+                    length = tokenizer.apply_chat_template(
+                        prompt, 
+                        tokenize=True, 
+                        add_generation_prompt=True, 
+                        return_tensors="pt"
+                    ).input_ids.size(1)
                 else:
+                    length = tokenizer(prompt, return_tensors="pt").input_ids.size(1)
+                if length <= getattr(tokenizer, 'model_max_length', 32768):
                     available_gens.append(g)
             
             if not available_gens:
@@ -218,9 +202,6 @@ class ProgressiveSelector(BaseSentenceAggregator):
             
             logger.debug(f"Round {rnd}: Using {selected_generator.name} (index {model_idx})")
             
-            # Generate with selected model
-            dicts = convo.render_dict()
-            
             # Prepare generation parameters
             gen_kwargs = {
                 "max_tokens": kwargs.get("max_tokens", max_new_tokens_per_round),
@@ -231,9 +212,9 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 gen_kwargs["seed"] = kwargs["seed"]
             if "stop_strings" in kwargs:
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
-            # enable_thinking is now handled at model initialization
             
-            best_output = selected_generator.generate(dicts, **gen_kwargs)
+            # Generate with selected model
+            best_output = selected_generator.generate(prompt, **gen_kwargs)
             
             # Record model attribution
             model_name = getattr(selected_generator, 'model_path', selected_generator.name)
@@ -249,9 +230,26 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 repeat_count = 1
                 last_output = best_output.text
             
-            # Add to conversation and update generated text
-            convo.add_assistant(best_output.text)
+            # Update generated text
             current_generated_text += best_output.text
+            
+            # Update the prompt for next round
+            if is_chat:
+                # For chat format, append to messages
+                if "messages" in prompt:
+                    # Check if last message is assistant
+                    if prompt["messages"] and prompt["messages"][-1].get("role") == "assistant":
+                        # Append to existing assistant message
+                        prompt["messages"][-1]["content"] += best_output.text
+                    else:
+                        # Add new assistant message
+                        prompt["messages"].append({"role": "assistant", "content": best_output.text})
+            else:
+                # For text completion, append to prompt
+                if "prompt" in prompt:
+                    prompt["prompt"] += best_output.text
+                else:
+                    prompt = {"prompt": str(prompt) + best_output.text}
             
             # Check for EOS
             if best_output.ended_with_eos:
@@ -268,7 +266,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
                     # Continue with the current model until natural stopping
                     pass
         
-        return "".join(convo.assistant_parts)
+        return current_generated_text
     
     def __repr__(self):
         if self.switch_mode == "length":

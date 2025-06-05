@@ -28,6 +28,9 @@ from .output_aggregation.token_level.distribution import DistributionAggregator,
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 from .output_aggregation.response_level.base import BaseResponseAggregator
 
+from ensemblehub.generators import GeneratorPool
+from ensemblehub.scorers.base import ScorerPool
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -41,7 +44,7 @@ class EnsembleConfig:
     
     # Output Aggregation Configuration  
     use_output_aggregation: bool = True
-    aggregation_method: str = "reward_based"  # reward_based, random, round_robin, gac, distribution
+    aggregation_method: str = "loop"  # reward_based, random, round_robin, gac, distribution
     aggregation_level: str = "sentence"  # sentence, token, response
     aggregation_params: Dict[str, Any] = None
     
@@ -69,7 +72,7 @@ class EnsembleFramework:
     SENTENCE_AGGREGATORS = {
         "reward_based": RewardBasedSelector,
         "random": RandomSentenceSelector,
-        "round_robin": RoundRobinSelector,
+        "loop": RoundRobinSelector,
         "progressive": ProgressiveSelector,
     }
     
@@ -104,7 +107,6 @@ class EnsembleFramework:
                 raise ValueError(f"Unknown model selection method: {self.config.model_selection_method}")
             
             self.model_selector = selector_class(**self.config.model_selection_params)
-            logger.info(f"Initialized model selector: {self.config.model_selection_method}")
         
         # Initialize output aggregator
         if self.config.use_output_aggregation:
@@ -145,18 +147,19 @@ class EnsembleFramework:
     
     def run_ensemble(
         self,
-        example: Dict[str, Any],
+        examples: List,
         model_specs: List[Dict[str, Any]],
         generators,
         scorers,
         model_stats: Optional[Dict[str, Dict[str, float]]] = None,
+        is_chat: bool = False,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         """
-        Run the complete ensemble pipeline.
+        Run the complete ensemble pipeline with batch support.
         
         Args:
-            example: Input example with instruction, input, output
+            examples: List of input examples, each with instruction, input, output
             model_specs: List of model specifications
             generators: Generator instances or pool
             scorers: Scorer instances or pool
@@ -164,23 +167,25 @@ class EnsembleFramework:
             **kwargs: Additional parameters
             
         Returns:
-            Dict with output, selected_models, and method info
+            List of Dict with output, selected_models, and method info
         """
-        logger.info(f"Running ensemble with config: selection={self.config.use_model_selection}, aggregation={self.config.use_output_aggregation}")
         
-        # Stage 1: Model Selection
-        selected_specs = model_specs  # Default: use all models
-        if self.config.use_model_selection and self.model_selector:
-            logger.info(f"🔍 Stage 1: Model Selection ({self.config.model_selection_method})")
-            selected_specs = self.model_selector.select_models(
-                example=example,
-                model_specs=model_specs,
-                model_stats=model_stats,
-                **kwargs
-            )
-            logger.info(f"✅ Selected {len(selected_specs)} models: {[s['path'] for s in selected_specs]}")
-        else:
-            logger.info("⏭️  Skipping model selection, using all models")
+        logger.info(f"Running ensemble with config: selection={self.config.use_model_selection}, aggregation={self.config.use_output_aggregation}, batch_size={len(examples)}")
+        
+        # For now, process each example separately
+        # TODO: In future, optimize model selection for batch processing
+        results = []
+        
+        for idx, single_example in enumerate(examples):
+            # Stage 1: Model Selection (per example for now)
+            selected_specs = model_specs  # Default: use all models
+            if self.config.use_model_selection and self.model_selector:
+                selected_specs = self.model_selector.select_models(
+                    example=single_example,
+                    model_specs=model_specs,
+                    model_stats=model_stats,
+                    **kwargs
+                )
         
         # Stage 2: Output Generation/Aggregation
         if self.config.use_output_aggregation and self.output_aggregator and (len(selected_specs) > 1):
@@ -196,25 +201,23 @@ class EnsembleFramework:
                         spec.get("engine", "hf"), 
                         spec.get("device"), 
                         spec.get("quantization", "none"), 
-                        spec.get("enable_thinking", False),
-                        spec.get("use_internal_template", True)
+                        spec.get("enable_thinking", False)
                     )
                     selected_generators.append(gen)
             else:
                 # Assume generators is already a list
                 selected_generators = generators[:len(selected_specs)]
             
-            # Run aggregation
-            output = self.output_aggregator.aggregate_generation(
+            # Run aggregation - output_aggregator should handle batch
+            outputs = self.output_aggregator.aggregate_generation(
                 generators=selected_generators,
                 scorers=scorers,
-                example=example,
-            **kwargs
+                examples=examples,
+                is_chat=is_chat,
+                **kwargs
             )
             
-            logger.info(f"✅ Output aggregation completed")
         elif len(selected_specs) == 1:
-            logger.info("⏭️  Skipping output aggregation, using only one model")
             # Simple fallback: use first selected model
             if hasattr(generators, 'get_generator'):
                 first_gen = generators.get_generator(
@@ -222,14 +225,10 @@ class EnsembleFramework:
                     selected_specs[0].get("engine", "hf"), 
                     selected_specs[0].get("device"), 
                     selected_specs[0].get("quantization", "none"), 
-                    selected_specs[0].get("enable_thinking", False),
-                    selected_specs[0].get("use_internal_template", True)
+                    selected_specs[0].get("enable_thinking", False)
                 )
             else:
                 first_gen = generators[0]
-            
-            # Generate simple output - pass the original example format
-            # The generator will handle the format conversion internally
             
             # Determine max_tokens based on generator type and model capabilities
             default_max_tokens = 256  # fallback default
@@ -280,15 +279,13 @@ class EnsembleFramework:
             if "stop_strings" in kwargs:
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
             
-            # Pass the example directly to the generator
-            # The generator will handle the format conversion based on the input
-            # It will automatically choose between alpaca and sharegpt format
-            result = first_gen.generate(example, **gen_kwargs)
-            output = result.text
+            # Pass the batch to the generator - generator should handle batch
+            batch_results = first_gen.generate(inputs=examples, is_chat=is_chat, **gen_kwargs)
+            outputs = [res.text if hasattr(res, 'text') else res for res in batch_results]
         else:
             # No models selected
             logger.error("No models selected for generation")
-            output = ""
+            outputs = [""] * len(examples)
         
         # Get model attribution data if available
         attribution_data = None
@@ -300,134 +297,185 @@ class EnsembleFramework:
             except Exception as e:
                 logger.warning(f"Failed to get attribution data: {e}")
         
-        # Return results
+        # Create results for each example
         selected_paths = [s['path'] for s in selected_specs]
         method_name = f"{self.config.model_selection_method if self.config.use_model_selection else 'no_selection'}+{self.config.aggregation_method if self.config.use_output_aggregation else 'no_aggregation'}"
         
-        result = {
-            "output": output,
-            "selected_models": selected_paths,
-            "method": method_name,
-            "config": {
-                "model_selection": self.config.model_selection_method if self.config.use_model_selection else None,
-                "output_aggregation": f"{self.config.aggregation_method}_{self.config.aggregation_level}" if self.config.use_output_aggregation else None,
+        results = []
+        for output in outputs:
+            result = {
+                "output": output,
+                "selected_models": selected_paths,
+                "method": method_name,
+                "config": {
+                    "model_selection": self.config.model_selection_method if self.config.use_model_selection else None,
+                    "output_aggregation": f"{self.config.aggregation_method}_{self.config.aggregation_level}" if self.config.use_output_aggregation else None,
+                }
             }
-        }
-        
-        # Add attribution data if available
-        if attribution_data:
-            result["attribution"] = attribution_data
-            logger.debug(f"Added attribution data to result")
             
-        return result
-    
-    @classmethod
-    def create_simple_ensemble(cls, ensemble_method: str = "reward_based", model_selection_method: str = "all") -> 'EnsembleFramework':
-        """
-        Factory method for creating simple ensemble configurations.
-        
-        Args:
-            ensemble_method: Output aggregation method
-            model_selection_method: Model selection method
+            # Add attribution data if available
+            if attribution_data:
+                result["attribution"] = attribution_data
+                logger.debug(f"Added attribution data to result")
             
-        Returns:
-            Configured EnsembleFramework
-        """
-        config = EnsembleConfig(
-            use_model_selection=True,
-            model_selection_method=model_selection_method,
-            use_output_aggregation=True,
-            aggregation_method=ensemble_method,
-            aggregation_level="sentence"
-        )
-        return cls(config)
-    
-    @classmethod
-    def create_selection_only(cls, model_selection_method: str = "zscore", **selection_params) -> 'EnsembleFramework':
-        """
-        Factory method for model selection only (no output aggregation).
-        
-        Args:
-            model_selection_method: Model selection method
-            **selection_params: Parameters for model selection
+            results.append(result)
             
-        Returns:
-            Configured EnsembleFramework
-        """
-        config = EnsembleConfig(
-            use_model_selection=True,
-            model_selection_method=model_selection_method,
-            model_selection_params=selection_params,
-            use_output_aggregation=False
-        )
-        return cls(config)
-    
-    @classmethod
-    def create_aggregation_only(cls, aggregation_method: str = "reward_based", aggregation_level: str = "sentence", **aggregation_params) -> 'EnsembleFramework':
-        """
-        Factory method for output aggregation only (use all models).
-        
-        Args:
-            aggregation_method: Output aggregation method
-            aggregation_level: Aggregation level (sentence/token/response)
-            **aggregation_params: Parameters for output aggregation
-            
-        Returns:
-            Configured EnsembleFramework
-        """
-        config = EnsembleConfig(
-            use_model_selection=False,
-            use_output_aggregation=True,
-            aggregation_method=aggregation_method,
-            aggregation_level=aggregation_level,
-            aggregation_params=aggregation_params
-        )
-        return cls(config)
+        return results
 
 
-# Convenience functions for backward compatibility and easy usage
-def run_simple_ensemble(
-    example: Dict[str, Any],
-    model_specs: List[Dict[str, Any]],
-    generators,
-    scorers,
-    ensemble_method: str = "reward_based",
-    model_selection_method: str = "all",
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Convenience function for simple ensemble usage.
-    """
-    framework = EnsembleFramework.create_simple_ensemble(ensemble_method, model_selection_method)
-    return framework.run_ensemble(example, model_specs, generators, scorers, **kwargs)
-
-
-def run_selection_only(
-    example: Dict[str, Any],
-    model_specs: List[Dict[str, Any]],
-    generators,
-    scorers,
+def run_ensemble(
+    examples: List,
+    model_specs: List[Dict] = None,
+    reward_spec: List[Dict] = None,
+    ensemble_method: str = "loop",
     model_selection_method: str = "zscore",
+    max_rounds: int = 500,
+    score_threshold: float = -2.0,
+    progressive_mode: str = "length",
+    length_thresholds: List[int] = None,
+    special_tokens: List[str] = None,
+    is_chat: bool = False,
     **kwargs
-) -> Dict[str, Any]:
+) -> List:
     """
-    Convenience function for model selection only.
+    New unified ensemble function using the refactored architecture.
+    Now uses the EnsembleFramework for better organization.
+    Supports both single example and batch processing.
+
+    Args:
+        example: Single input example with "instruction", "input", "output" (deprecated)
+        examples: List of input examples (preferred for batch processing)
+        model_specs: List of model specifications
+        reward_spec: List of reward model specifications
+        ensemble_method: Output aggregation method ("reward_based", "random", "round_robin")
+        model_selection_method: Model selection method ("zscore", "all", "random")
+        max_rounds: Maximum generation rounds
+        score_threshold: Score threshold for early stopping
+
+    Returns:
+        Dict with "output" and "selected_models" for single example
+        List of Dicts for batch processing
     """
-    framework = EnsembleFramework.create_selection_only(model_selection_method, **kwargs)
-    return framework.run_ensemble(example, model_specs, generators, scorers, **kwargs)
+
+    # Initialize pools
+    model_pool = GeneratorPool()
+    scorers = ScorerPool()
+
+    # Load model statistics
+    model_stats = get_default_model_stats()
+
+    # Load external scorers
+    for spec in reward_spec:
+        try:
+            scorers.get_scorer(spec)
+            logger.info(f"✅ Loaded scorer: {spec.get('path', 'unknown')}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load scorer {spec.get('path', 'unknown')}: {e}")
 
 
-def run_aggregation_only(
-    example: Dict[str, Any],
-    model_specs: List[Dict[str, Any]],
-    generators,
-    scorers,
-    aggregation_method: str = "reward_based",
-    aggregation_level: str = "sentence",
-    **kwargs
-) -> Dict[str, Any]:
+    aggregation_method = ensemble_method
+
+    # Handle progressive-specific parameters (only constructor params, not runtime params)
+    aggregation_params = {}
+    if ensemble_method == "progressive":
+        aggregation_params.update({
+            "switch_mode": progressive_mode,
+            "length_thresholds": length_thresholds or [1000, 2000, 3000],
+            "special_tokens": special_tokens or [r"<\think>"]
+        })
+
+    # Note: max_rounds and score_threshold are runtime parameters, not constructor parameters
+
+    # Create ensemble framework
+    config = EnsembleConfig(
+        use_model_selection=True,
+        model_selection_method=model_selection_method,
+        model_selection_params={"model_count": -1} if model_selection_method == "zscore" else {},
+        use_output_aggregation=True,
+        aggregation_method=aggregation_method,
+        aggregation_level="sentence",
+        aggregation_params=aggregation_params
+    )
+
+    framework = EnsembleFramework(config)
+
+    # Run ensemble
+    results = framework.run_ensemble(
+        examples=examples,
+        model_specs=model_specs,
+        generators=model_pool,
+        scorers=scorers,
+        model_stats=model_stats,
+        max_rounds=max_rounds,
+        score_threshold=score_threshold,
+        is_chat=is_chat,
+        **kwargs
+    )
+
+    return results
+
+
+
+
+def get_default_model_stats() -> Dict[str, Dict[str, float]]:
     """
-    Convenience function for output aggregation only.
+    Get default model statistics. In production, this should load from a file.
     """
-    framework = EnsembleFramework.create_aggregation_only(aggregation_method, aggregation_level, **kwargs)
-    return framework.run_ensemble(example, model_specs, generators, scorers, **kwargs)
+    return {
+        "Qwen/Qwen2.5-0.5B-Instruct": {
+            "ppl_mean": 9.795982360839844,
+            "ppl_std": 22.284496307373047,
+            "conf_mean": 0.6799513101577759,
+            "conf_std": 0.08082679659128189,
+            "weight": 0.2,
+            "size": 0.5
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": {
+            "ppl_mean": 9.795982360839844,
+            "ppl_std": 22.284496307373047,
+            "conf_mean": 0.6799513101577759,
+            "conf_std": 0.08082679659128189,
+            "weight": 0.2,
+            "size": 1.5
+        },
+        "Qwen/Qwen3-4B": {
+            "ppl_mean": 6.160105228424072,
+            "ppl_std": 6.118084907531738,
+            "conf_mean": 0.8231604099273682,
+            "conf_std": 0.07646501809358597,
+            "weight": 1.0,
+            "size": 4.0
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
+            "ppl_mean": 16.57339096069336,
+            "ppl_std": 50.37682342529297,
+            "conf_mean": 0.6976740956306458,
+            "conf_std": 0.10360505431890488,
+            "weight": 0.5,
+            "size": 7.0
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
+            "ppl_mean": 8.22177505493164,
+            "ppl_std": 14.440741539001465,
+            "conf_mean": 0.7438507676124573,
+            "conf_std": 0.0863514393568039,
+            "weight": 1.0,
+            "size": 14.0
+        },
+        "Qwen/Qwen2.5-Math-7B-Instruct": {
+            'ppl_mean': 4.232998847961426,
+            'ppl_std': 3.664811611175537,
+            'conf_mean': 0.7785097360610962,
+            'conf_std': 0.09053431451320648,
+            "weight": 1.0,
+            "size": 7.0
+        },
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {
+            "ppl_mean": 4.0472869873046875,
+            "ppl_std": 3.9851391315460205,
+            "conf_mean": 0.7702987194061279,
+            "conf_std": 0.0831739529967308,
+            "weight": 1.0,
+            "size": 32.0
+        }
+    }

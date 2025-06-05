@@ -97,3 +97,70 @@ lm_eval --model openai-completions \
 - EnsembleFramework协调模型选择和输出聚合
 - API层提供OpenAI兼容接口
 - 支持批量请求和单个请求的自动检测
+
+## 4. OpenAI兼容性完整实现 (2025-01-06)
+
+### 核心改进
+1. **API请求格式完全兼容**
+   - 支持所有OpenAI标准参数（temperature、top_p、presence_penalty等）
+   - 自动区分text completion（/v1/completions）和chat completion（/v1/chat/completions）
+   - 原始请求日志支持，通过`--show_input_details`查看完整请求内容
+
+2. **HF Generator简化**
+   - 移除了llamafactory依赖和复杂的模板系统
+   - 使用transformers原生的`apply_chat_template`
+   - 自动检测请求类型：
+     - Text completion：直接使用原始prompt，不应用任何模板
+     - Chat completion：使用`apply_chat_template`处理messages
+
+3. **格式处理逻辑**
+   ```python
+   # HF Generator中的格式检测
+   is_completion = isinstance(dicts, dict) and dicts.get("is_completion", False)
+   
+   if is_completion:
+       # Text completion - 原始prompt直接输入
+       text = dicts.get("prompt", "")
+       ids = self.tokenizer(text, return_tensors="pt")
+   else:
+       # Chat completion - 使用apply_chat_template
+       text = self.tokenizer.apply_chat_template(
+           messages,
+           tokenize=False,
+           add_generation_prompt=True,
+           enable_thinking=self.enable_thinking  # Qwen模型支持
+       )
+   ```
+
+4. **API层的智能路由**
+   - `/v1/completions`：处理旧版text completion请求
+   - `/v1/chat/completions`：处理新版chat格式请求
+   - 通过`is_completion`标志传递给generator
+
+### 使用示例
+```bash
+# Chat completion (推荐)
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ensemble",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "temperature": 0.7
+  }'
+
+# Text completion (兼容旧版)
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ensemble",
+    "prompt": "Say hello",
+    "max_tokens": 100,
+    "temperature": 0
+  }'
+```
+
+### 关键设计决策
+1. **为什么保留text completion支持**：兼容lm-evaluation-harness等工具
+2. **为什么使用is_completion标志**：让generator明确知道请求类型，避免模板误用
+3. **为什么保留enable_thinking**：支持Qwen等模型的思考链功能
+4. **为什么移除use_internal_template**：简化架构，由API层自动判断格式，无需用户配置

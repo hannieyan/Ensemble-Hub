@@ -12,11 +12,8 @@ The new unified framework (ensemble.py) replaces the old separate methods
 
 # Import the new unified framework
 from .ensemble import (
-    EnsembleFramework, 
+    EnsembleFramework,
     EnsembleConfig,
-    run_simple_ensemble,
-    run_selection_only, 
-    run_aggregation_only
 )
 
 # Import model selection methods
@@ -32,26 +29,12 @@ from .output_aggregation.sentence_level.round_robin import RoundRobinSelector
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 
-# Legacy imports for backward compatibility (deprecated)
-# These will be removed in future versions
-try:
-    from .simple import RewardBasedSelector as LegacyRewardBased
-    from .random import RandomSelector as LegacyRandomSelector
-    from .loop import RoundRobinSelector as LegacyRoundRobin
-except ImportError:
-    # If legacy files are not available, provide placeholders
-    LegacyRewardBased = RewardBasedSelector
-    LegacyRandomSelector = RandomSentenceSelector
-    LegacyRoundRobin = RoundRobinSelector
 
 __all__ = [
     # New unified framework
     "EnsembleFramework",
-    "EnsembleConfig", 
-    "run_simple_ensemble",
-    "run_selection_only",
-    "run_aggregation_only",
-    
+    "EnsembleConfig",
+
     # Model Selection
     "ZScoreSelector",
     "AllModelsSelector", 
@@ -68,9 +51,4 @@ __all__ = [
     "GaCTokenAggregator",
     "DistributionAggregator", 
     "WeightedAverageAggregator",
-    
-    # Legacy (deprecated)
-    "LegacyRewardBased",
-    "LegacyRandomSelector", 
-    "LegacyRoundRobin"
 ]

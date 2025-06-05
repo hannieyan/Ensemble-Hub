@@ -24,7 +24,7 @@ logger = logging.getLogger("ensemble_inference")
 
 class GeneratorPool:
     """Caches all loaded generators and reward models"""
-    _gen_cache: Dict[Tuple[str, str, str, str, bool, bool], BaseGenerator] = {}  # (engine, path, quantization, device, enable_thinking, use_internal_template)
+    _gen_cache: Dict[Tuple[str, str, str, str, bool], BaseGenerator] = {}  # (engine, path, quantization, device, enable_thinking)
     _reward_cache: Dict[str, str] = {}
     _vllm_lock = threading.Lock()  # Lock for vLLM initialization
     _hf_lock = threading.Lock()  # Lock for HF model initialization
@@ -32,22 +32,22 @@ class GeneratorPool:
     _initialized_devices = set()  # Track which devices have been initialized
 
     @classmethod
-    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none", enable_thinking: bool = True, use_internal_template: bool = True) -> BaseGenerator:
+    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none", enable_thinking: bool = True) -> BaseGenerator:
         """
         Load a generator model (e.g., HF or vLLM) to a specified device (e.g., 'cuda:0', 'cpu').
         """
         resolved_device = device or "auto"
-        key = (engine, path, quantization, resolved_device, enable_thinking, use_internal_template)  # Include device, enable_thinking, and use_internal_template in cache key
+        key = (engine, path, quantization, resolved_device, enable_thinking)  # Include device and enable_thinking in cache key
         
         if key not in cls._gen_cache:
-            logger.info("[Pool] loading %s (%s) with quantization=%s on device=%s, template=%s", path, engine, quantization, resolved_device, use_internal_template)
+            logger.info("[Pool] loading %s (%s) with quantization=%s on device=%s", path, engine, quantization, resolved_device)
 
             if engine == "hf":
                 # Use lock to prevent concurrent HF model initialization
                 with cls._hf_lock:
                     # Double-check if another thread already initialized it
                     if key not in cls._gen_cache:
-                        cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization, enable_thinking=enable_thinking, use_internal_template=use_internal_template)
+                        cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization, enable_thinking=enable_thinking)
             elif engine == "vllm":
                 # Use lock to prevent concurrent vLLM initialization
                 with cls._vllm_lock:

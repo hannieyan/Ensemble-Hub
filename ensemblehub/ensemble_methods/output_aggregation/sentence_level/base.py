@@ -3,7 +3,7 @@ Base class for sentence-level aggregation methods.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class BaseSentenceAggregator(ABC):
         self,
         generators: List,
         scorers,
-        example: Dict[str, Any],
+        examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
         score_threshold: float = -2.0,
         **kwargs
