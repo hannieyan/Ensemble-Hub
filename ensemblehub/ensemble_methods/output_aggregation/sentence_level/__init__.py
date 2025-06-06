@@ -6,13 +6,13 @@ These aggregate sentence/segment outputs from multiple models.
 from .base import BaseSentenceAggregator
 from .reward_based import RewardBasedSelector
 from .random_selector import RandomSentenceSelector
-from .round_robin import RoundRobinSelector
+from .loop import LoopSelector
 from .progressive_selector import ProgressiveSelector
 
 __all__ = [
     "BaseSentenceAggregator",
     "RewardBasedSelector",
     "RandomSentenceSelector",
-    "RoundRobinSelector",
+    "LoopSelector",
     "ProgressiveSelector"
 ]

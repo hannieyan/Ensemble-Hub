@@ -24,7 +24,7 @@ from .output_aggregation.sentence_level.progressive_selector import ProgressiveS
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
 # Output Aggregation imports
 from .output_aggregation.sentence_level.reward_based import RewardBasedSelector
-from .output_aggregation.sentence_level.round_robin import RoundRobinSelector
+from .output_aggregation.sentence_level.loop import LoopSelector
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 
@@ -68,7 +68,7 @@ class EnsembleFramework:
         # Sentence-level aggregators
         "reward_based": (RewardBasedSelector, "sentence", ["exclude_self_scoring", "max_repeat", "name"]),
         "random": (RandomSentenceSelector, "sentence", ["max_repeat", "name"]),
-        "round_robin": (RoundRobinSelector, "sentence", ["max_repeat", "name"]),
+        "loop": (LoopSelector, "sentence", ["max_repeat", "name"]),
         "progressive": (ProgressiveSelector, "sentence", ["switch_mode", "length_thresholds", "special_tokens", "max_repeat", "name"]),
         
         # Token-level aggregators
@@ -245,7 +245,7 @@ def run_ensemble(
         output_aggregation_method: Aggregation method for outputs:
             - "reward_based": Select based on reward scores
             - "random": Random selection
-            - "round_robin": Round-robin selection
+            - "loop": Loop selection
             - "progressive": Progressive selection based on length/tokens
             - "gac": Token-level GAC aggregation
             - "distribution": Token-level distribution aggregation

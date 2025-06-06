@@ -21,24 +21,6 @@ class RandomSentenceSelector(BaseSentenceAggregator):
     def __init__(self, max_repeat: int = 3, name: str = None):
         super().__init__(name or "RandomSentenceSelector")
         self.max_repeat = max_repeat
-    
-    def select_best_sentence(
-        self,
-        sentences: List[str],
-        generators: List,
-        prompt: str,
-        round_num: int = 0,
-        scorers = None,
-        **kwargs
-    ) -> Tuple[int, str, float]:
-        """
-        Randomly select a sentence.
-        """
-        if not sentences:
-            return 0, "", 0.0
-        
-        best_idx = random.randint(0, len(sentences) - 1)
-        return best_idx, sentences[best_idx], 0.0
 
     def aggregate_generation(
         self,
@@ -68,7 +50,7 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         else:
             conversations = examples.copy()
 
-        self.attributions = [ModelAttribution() for _ in range(batch_size)]
+        attributions = [ModelAttribution() for _ in range(batch_size)]
 
         for rnd in range(1, max_rounds + 1):
             # Skip if all examples are finished
@@ -78,7 +60,6 @@ class RandomSentenceSelector(BaseSentenceAggregator):
 
             # Prepare active examples (not finished)
             active_indices = [i for i in range(batch_size) if not finished[i]]
-            active_conversations = [conversations[i] for i in active_indices]
 
             # Check if any sample exceeds max_tokens and mark as finished
             if available_gens and hasattr(available_gens[0], 'tokenizer'):
@@ -116,7 +97,7 @@ class RandomSentenceSelector(BaseSentenceAggregator):
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
 
             # Generate for all active examples
-            outputs = selected_generator.generate(conversations, **gen_kwargs)
+            outputs = selected_generator.generate(active_conversations, **gen_kwargs)
 
             # Ensure outputs is a list
             if not isinstance(outputs, list):
@@ -137,7 +118,7 @@ class RandomSentenceSelector(BaseSentenceAggregator):
             for idx, (active_idx, output_text, eos) in enumerate(zip(active_indices, output_texts, ended_with_eos)):
                 # Record attribution
                 model_name = getattr(selected_generator, 'model_path', selected_generator.name)
-                self.attributions[active_idx].add_segment(output_text, model_name, rnd)
+                attributions[active_idx].add_segment(output_text, model_name, rnd)
 
                 # Check repetition
                 if output_text == last_outputs[active_idx]:

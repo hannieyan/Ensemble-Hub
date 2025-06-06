@@ -23,7 +23,7 @@ from .model_selection.learned import LLMBlenderSelector, MetaLearningSelector
 # Import output aggregation methods
 from .output_aggregation.sentence_level.reward_based import RewardBasedSelector
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
-from .output_aggregation.sentence_level.round_robin import RoundRobinSelector
+from .output_aggregation.sentence_level.loop import LoopSelector
 
 # Import token-level aggregation
 from .output_aggregation.token_level.gac import GaCTokenAggregator
@@ -45,7 +45,7 @@ __all__ = [
     # Output Aggregation - Sentence Level
     "RewardBasedSelector",
     "RandomSentenceSelector",
-    "RoundRobinSelector",
+    "LoopSelector",
     
     # Output Aggregation - Token Level
     "GaCTokenAggregator",

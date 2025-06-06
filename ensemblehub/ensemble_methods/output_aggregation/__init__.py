@@ -18,7 +18,7 @@ from .token_level.gac import GaCTokenAggregator
 from .sentence_level.base import BaseSentenceAggregator
 from .sentence_level.reward_based import RewardBasedSelector
 from .sentence_level.random_selector import RandomSentenceSelector
-from .sentence_level.round_robin import RoundRobinSelector
+from .sentence_level.loop import LoopSelector
 
 # Response-level aggregation
 from .response_level.base import BaseResponseAggregator
@@ -37,7 +37,7 @@ __all__ = [
     "BaseSentenceAggregator",
     "RewardBasedSelector",
     "RandomSentenceSelector", 
-    "RoundRobinSelector",
+    "LoopSelector",
     
     # Response-level
     "BaseResponseAggregator",
