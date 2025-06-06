@@ -131,7 +131,7 @@ class HFGenerator(BaseGenerator):
             # Build generation config using shared method
             # Generate with direct parameters
             generate_kwargs = {
-                "max_newqqqq_tokens": max_tokens,
+                "max_new_tokens": max_tokens,
                 "pad_token_id": self.tokenizer.eos_token_id,
                 "eos_token_id": self.tokenizer.eos_token_id,
                 "repetition_penalty": repetition_penalty,

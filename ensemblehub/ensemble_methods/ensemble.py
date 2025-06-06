@@ -39,7 +39,7 @@ class EnsembleConfig:
     model_selection_params: Dict[str, Any] = None
     
     # Output Aggregation Configuration
-    output_aggregation_method: str = "first"  # first, reward_based, random, round_robin, gac, distribution
+    output_aggregation_method: str = "first"  # first, reward_based, random, loop, gac, distribution
     output_aggregation_params: Dict[str, Any] = None
     
     def __post_init__(self):

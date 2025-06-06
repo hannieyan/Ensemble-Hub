@@ -106,7 +106,7 @@ def run_batch_inference(
     reward_spec: List[Dict] = None,
     max_examples: int = None,
     batch_size: int = 4,
-    output_aggregation_method: str = "round_robin",
+    output_aggregation_method: str = "loop",
     model_selection_method: str = "all",
     max_tokens: int = 2048,
     max_rounds: int = 500,
@@ -325,9 +325,9 @@ def main():
     
     # Ensemble configuration
     parser.add_argument(
-        "--output_aggregation_method", type=str, default="round_robin",
-        choices=["reward_based", "random", "round_robin", "progressive", "gac", "distribution"],
-        help="Output aggregation method (default: round_robin)"
+        "--output_aggregation_method", type=str, default="loop",
+        choices=["reward_based", "random", "loop", "progressive", "gac", "distribution"],
+        help="Output aggregation method (default: loop)"
     )
     parser.add_argument(
         "--model_selection_method", type=str, default="all",
