@@ -5,7 +5,7 @@ Random sentence selection (migrated from random.py).
 import random
 import logging
 from copy import deepcopy
-from typing import List, Dict, Any, Tuple, Union
+from typing import List, Dict, Tuple, Union
 
 from .base import BaseSentenceAggregator, ModelAttribution
 
@@ -46,19 +46,13 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         scorers,
         examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
+        max_tokens: int = 16384,
         max_new_tokens_per_round: int = 256,
         is_chat: bool = False,
         **kwargs
     ) -> List[str]:  # 返回列表
-        """
-        Run iterative random sentence selection with batch support.
 
-        Args:
-            examples: List of inputs (strings for completion, list of dicts for chat)
 
-        Returns:
-            List of generated strings, one for each input
-        """
         batch_size = len(examples)
         available_gens = [g for g in generators]
 
@@ -86,37 +80,32 @@ class RandomSentenceSelector(BaseSentenceAggregator):
             active_indices = [i for i in range(batch_size) if not finished[i]]
             active_conversations = [conversations[i] for i in active_indices]
 
-            # Check length limits and filter generators
-            available_gens_copy = available_gens.copy()
-            for g in available_gens_copy[:]:
-                tok = getattr(g, "tokenizer", None)
-                if tok is not None:
-                    # Check max length for any active conversation
-                    max_length = 0
-                    for conv in active_conversations:
-                        if is_chat:
-                            prompt = tok.apply_chat_template(conv, add_generation_prompt=True, tokenize=False)
-                        else:
-                            prompt = conv
-                        length = len(tok.encode(prompt))
-                        max_length = max(max_length, length)
+            # Check if any sample exceeds max_tokens and mark as finished
+            if available_gens and hasattr(available_gens[0], 'tokenizer'):
+                tok = available_gens[0].tokenizer
+                for i, active_idx in enumerate(active_indices[:]):
+                    # Check current output length
+                    current_length = len(tok.encode(results[active_idx]))
+                    if current_length >= max_tokens:
+                        logger.info(f"Example {active_idx}: Reached max_tokens ({current_length}/{max_tokens})")
+                        finished[active_idx] = True
+                        active_indices.remove(active_idx)
 
-                    if max_length > getattr(tok, 'model_max_length', 32768):
-                        logger.info(f"Skip {g.name}: prompt length {max_length} > max")
-                        available_gens_copy.remove(g)
-
-            if not available_gens_copy:
-                logger.error("No generators available for current prompt length")
+            # Update active conversations after filtering
+            active_conversations = [conversations[i] for i in active_indices]
+            
+            if not active_indices:
+                logger.info("All examples finished due to length limits")
                 break
 
             # Random selection
-            selected_generator = random.choice(available_gens_copy)
+            selected_generator = random.choice(available_gens)
             model_short = getattr(selected_generator, 'model_path', selected_generator.name).split('/')[-1]
-            logger.info(f"🎲 Round {rnd}: Randomly selected {model_short} from {len(available_gens_copy)} available generators")
+            logger.info(f"🎲 Round {rnd}: Randomly selected {model_short} from {len(available_gens)} available generators")
 
             # Prepare generation parameters
             gen_kwargs = {
-                "max_tokens": kwargs.get("max_tokens", max_new_tokens_per_round),
+                "max_tokens": max_new_tokens_per_round,
                 "temperature": kwargs.get("temperature", 0.95),
                 "top_p": kwargs.get("top_p", 0.7),
                 "is_chat": is_chat,  # We've already applied chat template

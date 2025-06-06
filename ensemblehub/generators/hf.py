@@ -12,7 +12,6 @@ import torch
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    GenerationConfig,
 )
 
 from .base import BaseGenerator, GenOutput, STOP_TOKENS_TEXT, trim_text
@@ -86,37 +85,6 @@ class HFGenerator(BaseGenerator):
         
         logger.info(f"🏗️  HFGenerator {self.name} initialized")
 
-    def _build_generation_config(
-        self, 
-        temperature: float,
-        max_tokens: int,
-        top_p: float = 0.7,
-        top_k: int = 50,
-        repetition_penalty: float = 1.0,
-        stop_strings: Optional[Union[str, List[str]]] = None
-    ) -> GenerationConfig:
-        """Build generation config based on temperature and other parameters"""
-        base_config = {
-            "repetition_penalty": repetition_penalty,
-            "max_new_tokens": max_tokens,
-            "pad_token_id": self.tokenizer.eos_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
-            "stop_strings": ["</s>", "<|im_end|>"] if stop_strings is None else stop_strings,
-        }
-        
-        if temperature > 0:
-            # Sampling mode
-            base_config.update({
-                "do_sample": True,
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-            })
-        else:
-            # Deterministic mode (temperature=0)
-            base_config["do_sample"] = False
-            
-        return GenerationConfig(**base_config)
 
     @torch.inference_mode()
     def generate(
@@ -138,7 +106,7 @@ class HFGenerator(BaseGenerator):
             # Auto-detect format: if input has "prompt" field, it's text completion
             if not is_chat:
                 # Text completion mode - use raw prompt without template
-                logger.info(f"  Raw prompt: {inputs[0][:200]}...")
+                logger.info(f"  Raw prompt: {inputs[0]}")
                 ids = self.tokenizer(inputs, return_tensors="pt", padding=True).to(self.device)
             else:
                 # Chat completion mode - use apply_chat_template
@@ -161,15 +129,26 @@ class HFGenerator(BaseGenerator):
                     torch.cuda.manual_seed_all(seed)
             
             # Build generation config using shared method
-            cfg = self._build_generation_config(
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                top_k=top_k,
-                repetition_penalty=repetition_penalty,
-                stop_strings=stop_strings
-            )
-            outputs = self.model.generate(**ids, generation_config=cfg, tokenizer=self.tokenizer)
+            # Generate with direct parameters
+            generate_kwargs = {
+                "max_new_tokens": max_tokens,
+                "pad_token_id": self.tokenizer.eos_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+                "repetition_penalty": repetition_penalty,
+                "tokenizer": self.tokenizer
+            }
+            
+            if temperature > 0:
+                generate_kwargs.update({
+                    "do_sample": True,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                })
+            else:
+                generate_kwargs["do_sample"] = False
+                
+            outputs = self.model.generate(**ids, **generate_kwargs)
 
             # Process each output in the batch
             results = []
