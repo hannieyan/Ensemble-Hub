@@ -24,7 +24,7 @@ from .output_aggregation.sentence_level.progressive_selector import ProgressiveS
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
 # Output Aggregation imports
 from .output_aggregation.sentence_level.reward_based import RewardBasedSelector
-from .output_aggregation.sentence_level.loop import LoopSelector
+from .output_aggregation.sentence_level.loop_selector import LoopSelector
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 
