@@ -71,30 +71,7 @@ class BaseSentenceAggregator(ABC):
     def __init__(self, name: str = None):
         self.name = name or self.__class__.__name__
         self.attribution = ModelAttribution()
-    
-    @abstractmethod
-    def select_best_sentence(
-        self,
-        sentences: List[str],
-        generators: List,
-        prompt: str,
-        scorers = None,
-        **kwargs
-    ) -> Tuple[int, str, float]:
-        """
-        Select the best sentence from multiple candidates.
-        
-        Args:
-            sentences: List of candidate sentences from different models
-            generators: List of generator models
-            prompt: Current prompt/context
-            scorers: Scorer pool for evaluation
-            **kwargs: Additional arguments
-            
-        Returns:
-            Tuple of (best_index, best_sentence, score)
-        """
-        pass
+
     
     @abstractmethod
     def aggregate_generation(

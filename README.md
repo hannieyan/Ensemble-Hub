@@ -35,10 +35,12 @@ Ensemble-Hub supports multiple ensemble strategies that can be easily configured
 - **`random`**: Randomly select a subset of models
 
 ### Output Aggregation Methods
-- **`simple`**: Reward-based selection using scoring models (default)
+- **`reward_based`**: Reward-based selection using scoring models (default)
 - **`progressive`**: Length or token-based model switching during generation
 - **`random`**: Random selection from model outputs
-- **`loop`**: Round-robin cycling through models (循环推理)
+- **`round_robin`**: Round-robin cycling through models
+- **`gac`**: GAC token-level aggregation
+- **`distribution`**: Distribution-based token aggregation
 
 ### Progressive Ensemble Options
 - **Length-based**: Switch models based on output length thresholds
@@ -116,7 +118,10 @@ pip install -r requirements.txt
 python -m ensemblehub.inference \
     --input_path data/AIME2024/aime/aime24.json \
     --output_path saves/aime24.jsonl \
-    --max_examples 500
+    --max_examples 500 \
+    --batch_size 4 \
+    --output_aggregation_method round_robin \
+    --max_tokens 2048
 ```
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
