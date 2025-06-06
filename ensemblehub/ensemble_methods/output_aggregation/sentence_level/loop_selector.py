@@ -28,22 +28,10 @@ class LoopSelector(BaseSentenceAggregator):
         examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
         max_tokens: int = 16384,
-        max_new_tokens_per_round: int = 256,
+        max_new_tokens_per_round: int = 32,
         is_chat: bool = False,
         **kwargs
     ) -> List[str]:  # 返回列表
-        """
-        Run iterative round-robin sentence selection with batch support.
-        Args:
-            generators: List,
-            scorers: Scorers for evaluation (not used in round-robin)
-            examples: List of inputs (strings for completion, list of dicts for chat)
-            max_rounds: Maximum number of rounds to run
-            max_new_tokens_per_round: Maximum tokens to generate in each round
-            is_chat: Whether the input is a chat conversation (list of dicts)
-        Returns:
-            List of generated strings, one for each input
-        """
 
 
         batch_size = len(examples)
@@ -140,7 +128,7 @@ class LoopSelector(BaseSentenceAggregator):
                         finished[active_idx] = True
                         continue
                 else:
-                    repeat_counts[active_idx] = 1
+                    repeat_counts[active_idx] = 0
                     last_outputs[active_idx] = output_text
 
                 # Update conversation/text

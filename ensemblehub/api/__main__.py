@@ -46,7 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable_thinking", action="store_true",
                        help="Enable thinking mode for models that support it")
     parser.add_argument("--model_specs", type=str, default=None,
-                       help="Model specifications in format 'model1:engine:device,model2:engine:device'")
+                       help="Model specifications in JSON format: '[{\"path\":\"model1\",\"engine\":\"hf\",\"device\":\"cuda:0\"},{\"path\":\"model2\",\"engine\":\"hf\",\"device\":\"cuda:1\"}]'")
     
     # vLLM specific options
     parser.add_argument("--vllm_enforce_eager", action="store_true",

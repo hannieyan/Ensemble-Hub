@@ -481,17 +481,11 @@ def create_app_with_config(
     
     # Update model specs if provided
     if model_specs:
-        # Parse model specs from string format
-        # Expected format: "model1:engine:device,model2:engine:device"
-        models = []
-        for spec in model_specs.split(","):
-            parts = spec.strip().split(":")
-            if len(parts) >= 2:
-                models.append({
-                    "path": parts[0],
-                    "engine": parts[1],
-                    "device": parts[2] if len(parts) > 2 else "cpu"
-                })
+        # Parse model specs as JSON format
+        # Expected format: '[{"path": "model1", "engine": "hf", "device": "cuda:0"}, ...]'
+        models = json.loads(model_specs)
+        logger.info(f"Parsed model_specs as JSON: {len(models)} models")
+        
         if models:
             api_config.model_specs = models
     

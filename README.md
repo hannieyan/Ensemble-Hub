@@ -37,51 +37,56 @@ Ensemble-Hub supports multiple ensemble strategies that can be easily configured
 ### Output Aggregation Methods
 - **`reward_based`**: Reward-based selection using scoring models (default)
 - **`progressive`**: Length or token-based model switching during generation
+  - Length-based: switch models based on output length thresholds
+  - Token-based: switch models when encountering special tokens
 - **`random`**: Random selection from model outputs
 - **`loop`**: Round-robin cycling through models
 - **`gac`**: GAC token-level aggregation
 - **`distribution`**: Distribution-based token aggregation
 
-### Progressive Ensemble Options
-- **Length-based**: Switch models based on output length thresholds
-- **Token-based**: Switch models when encountering special tokens
-- **Mixed mode**: Combine both approaches
-
-### Configuration Examples
-```bash
-# Reward-based ensemble with statistical model selection
-python -m ensemblehub.api --model_selection_method zscore --ensemble_method simple
-
-# Round-robin through all models
-python -m ensemblehub.api --model_selection_method all --ensemble_method loop
-
-# Progressive ensemble with length switching
-python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
-  --length_thresholds 100,300,500
-```
-
-
 ## 🗂 Repository layout
 
 ```
 Ensemble-Hub/
-├── ensemblehub/                 # Main package
-│   ├── api.py                   # FastAPI server with command line configuration
-│   ├── ensemble.py              # Core ensemble framework
-│   ├── generator.py             # Model generators (HF, vLLM backends)
-│   ├── scorer.py                # Reward models and scoring
-│   ├── inference.py             # Inference pipeline
-│   ├── utils.py                 # Utility functions
-│   └── ensemble_methods/        # Ensemble method implementations
-│       ├── model_selection/     # Model selection strategies
-│       └── output_aggregation/  # Output aggregation methods
-├── data/                        # Datasets (AIME, GSM8K, MATH, etc.)
-├── docs/                        # Documentation
-│   └── api_usage.md            # Complete API usage guide
-├── test/                        # Test suite
-├── scripts/                     # Utility scripts
-├── requirements.txt             # Dependencies
-└── README.md                    # You're here!
+├── ensemblehub/                         # Main package
+│   ├── api/                             # FastAPI server module
+│   │   ├── __main__.py                  # Command line entry point
+│   │   └── app.py                       # FastAPI application
+│   ├── ensemble_methods/                # Ensemble method implementations
+│   │   ├── ensemble.py                  # Unified ensemble framework
+│   │   ├── model_selection/             # Model selection strategies
+│   │   │   ├── base.py                  # Base selector interface
+│   │   │   ├── statistical.py           # Z-score, random selection
+│   │   │   └── learned.py               # LLM-Blender, meta-learning
+│   │   └── output_aggregation/          # Output aggregation methods
+│   │       ├── token_level/             # Token-level aggregation (GAC, distribution)
+│   │       ├── sentence_level/          # Sentence-level aggregation
+│   │       │   ├── loop_selector.py     # Round-robin selection
+│   │       │   ├── random_selector.py   # Random selection
+│   │       │   ├── reward_based.py      # Reward-based selection
+│   │       │   └── progressive_selector.py # Progressive selection
+│   │       └── response_level/          # Response-level aggregation
+│   ├── generators/                      # Model generators (HF, vLLM backends)
+│   │   ├── base.py                      # Base generator interface
+│   │   ├── hf.py                        # Hugging Face transformers
+│   │   ├── vllm.py                      # vLLM backend
+│   │   └── pool.py                      # Generator pool management
+│   ├── scorers/                         # Reward models and scoring
+│   │   └── base.py                      # Base scorer interface
+│   ├── inference.py                     # High-level inference pipeline
+│   └── utils.py                         # Utility functions
+├── data/                                # Datasets (AIME, GSM8K, MATH, etc.)
+├── docs/                                # Documentation
+│   ├── api_usage.md                     # Complete API usage guide
+│   ├── benchmark_single_model.md        # Single model benchmarking
+│   └── progressive_selector_usage.md    # Progressive selector guide
+├── examples/                            # Usage examples
+│   └── test_single_model.py             # Single model testing
+├── scripts/                             # Utility scripts
+│   ├── vllm_infer.py                    # vLLM inference script
+│   └── grader.py                        # Answer grading
+├── requirements.txt                     # Dependencies
+└── README.md                            # You're here!
 ```
 
 ##  Getting Started
@@ -112,62 +117,75 @@ pip install -r requirements.txt
 ### 💻 Quickstart
 
 > [!NOTE]
-> Please update ensemblehub/inference.py to custom your LLM ensemble.
+> Please update ensemblehub/inference.py to custom your ensembled LLMs.
 
 ```shell
 python -m ensemblehub.inference \
-    --input_path data/AIME2024/aime/aime24.json \
-    --output_path saves/aime24.jsonl \
-    --max_examples 500 \
-    --batch_size 4 \
-    --output_aggregation_method loop \
-    --max_tokens 2048
+   --input_path data/AIME2024/aime/aime24.json \
+   --output_path saves/aime24.jsonl \
+   --max_examples 500 \
+   --batch_size 4 \
+   --output_aggregation_method loop \
+   --max_tokens 2048
 ```
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
 
-### 🚀 Start the REST API
+### 🚀 Start the FastAPI
 
-#### Quick Start with Default Configuration
+#### Quick Start with Simple Configuration
 
 ```bash
-# Basic startup with default models
-python -m ensemblehub.api
+python -m ensemblehub.api \
+   --model_specs '[
+     {"path":"Qwen/Qwen2.5-0.5B-Instruct","engine":"hf","device":"cuda:0"},
+     {"path":"Qwen/Qwen2.5-1.5B-Instruct","engine":"hf","device":"cuda:1","quantization":"4bit"}
+   ]' \
+   --show_output_details \
+   --output_aggregation_method random
+```
 
-# Or use uvicorn (without ensemble configuration)
-uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
+#### Evaluate with lm-evaluation-harness
+
+```bash
+export OPENAI_API_KEY=dummy_key
+lm_eval --model openai-completions \
+   --tasks arc_challenge_chat \
+   --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
+   --batch_size 2 \
+   --num_fewshot 5
 ```
 
 #### Advanced Configuration with Command Line Arguments
 
 ```bash
 # Configure different ensemble methods
-python -m ensemblehub.api --model_selection_method all --ensemble_method random
+python -m ensemblehub.api --model_selection_method all --output_aggregation_method random
 
 # Loop/Round-robin inference (循环推理)
-python -m ensemblehub.api --model_selection_method all --ensemble_method loop --max_rounds 5
+python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --max_rounds 5
 
 # Progressive ensemble with length-based switching
-python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
+python -m ensemblehub.api --output_aggregation_method progressive --progressive_mode length \
   --length_thresholds 50,100,200 --max_rounds 3
 
 # Statistical model selection with reward-based aggregation
-python -m ensemblehub.api --model_selection_method zscore --ensemble_method simple \
+python -m ensemblehub.api --model_selection_method zscore --output_aggregation_method reward_based \
   --score_threshold -1.5 --max_rounds 10
 
 # Custom server configuration
 python -m ensemblehub.api --host 0.0.0.0 --port 9876 \
-  --ensemble_method loop --show_attribution
+  --output_aggregation_method loop --show_output_details
 
 # Enable thinking mode for reasoning models (e.g., DeepSeek-R1)
-python -m ensemblehub.api --model_selection_method all --ensemble_method loop --enable_thinking
+python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --enable_thinking
 ```
 
 **Available Configuration Options:**
 - **Model Selection**: `zscore` (statistical), `all` (use all models), `random`
-- **Ensemble Methods**: `simple` (reward-based), `progressive`, `random`, `loop` (round-robin)
+- **Output Aggregation Methods**: `reward_based`, `progressive`, `random`, `loop`
 - **Progressive Options**: `--progressive_mode`, `--length_thresholds`, `--special_tokens`
-- **General**: `--max_rounds`, `--score_threshold`, `--show_attribution`
+- **General**: `--max_rounds`, `--score_threshold`, `--show_input_details`, `--show_output_details`
 - **Thinking Mode**: `--enable_thinking` (enables reasoning models' thinking process)
 
 > **Note**: Command line ensemble configuration only works with `python -m ensemblehub.api`. When using `uvicorn`, only server settings (host/port) are configurable.
@@ -181,10 +199,24 @@ python -m ensemblehub.api --model_selection_method all --ensemble_method loop --
    # ➜ {"status":"ready", "available_methods": [...]}
    ```
 
-2. **Basic Chat Completion**
+2. **Chat Completion (New OpenAI Format)**
 
    ```bash
    curl -X POST http://localhost:8000/v1/chat/completions \
+       -H "Content-Type: application/json" \
+       -d '{
+           "model": "ensemble",
+           "messages": [
+               {"role": "user", "content": "What is the capital of France?"}
+           ],
+           "max_tokens": 50
+       }'
+   ```
+
+3. **Text Completion (Legacy OpenAI Format)**
+
+   ```bash
+   curl -X POST http://localhost:8000/v1/completions \
        -H "Content-Type: application/json" \
        -d '{
            "model": "ensemble",
@@ -193,149 +225,12 @@ python -m ensemblehub.api --model_selection_method all --ensemble_method loop --
        }'
    ```
 
-3. **Ensemble with Custom Configuration**
-
-   ```bash
-   curl -X POST http://localhost:8000/v1/chat/completions \
-       -H "Content-Type: application/json" \
-       -d '{
-           "model": "ensemble",
-           "prompt": "Solve: 2x + 3 = 7",
-           "max_tokens": 100,
-           "ensemble_config": {
-               "model_selection_method": "zscore",
-               "aggregation_method": "reward_based",
-               "use_model_selection": true,
-               "use_output_aggregation": true
-           }
-       }'
-   ```
-
-4. **Loop/Round-robin Endpoint** (dedicated endpoint for 循环推理)
-
-   ```bash
-   curl -X POST http://localhost:8000/v1/loop/completions \
-       -H "Content-Type: application/json" \
-       -d '{
-           "model": "ensemble",
-           "prompt": "Explain quantum computing",
-           "max_tokens": 200
-       }'
-   ```
-
 For complete API documentation, visit: http://localhost:8000/docs
 
-#### LM-Evaluation-Harness Integration
 
-The API is fully compatible with lm-evaluation-harness for benchmarking ensemble methods:
-
-1. **Install lm-evaluation-harness:**
-   ```shell
-   git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
-   cd lm-evaluation-harness
-   pip install -e .
-   ```
-
-2. **Run ensemble evaluation:**
-   ```bash
-   # Start API with specific ensemble configuration
-   python -m ensemblehub.api --ensemble_method loop --model_selection_method all &
-   
-   # Run evaluation against the ensemble API
-   lm_eval \
-     --model openai-completions \
-     --tasks gsm8k \
-     --model_args model=ensemble,base_url=http://localhost:8000,v1=True,tokenizer_backend=None \
-     --batch_size 1
-   ```
-
-3. **Compare different ensemble methods:**
-   ```bash
-   # Test different configurations
-   python -m ensemblehub.api --ensemble_method random --port 8001 &
-   python -m ensemblehub.api --ensemble_method simple --port 8002 &
-   python -m ensemblehub.api --ensemble_method progressive --port 8003 &
-   
-   # Run evaluations on different ports to compare methods
-   ```
 
 ## 🛠️ Troubleshooting
 
-### vLLM CUDA Memory Allocation Error
-
-If you encounter this error when using vLLM:
-```
-captures_underway.empty() INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachingAllocator.cpp":3085
-```
-
-**Solutions:**
-
-1. **Use command line flags (Recommended):**
-   ```bash
-   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill
-   ```
-
-2. **Switch to HuggingFace engine:**
-   ```bash
-   # Change from "engine": "vllm" to "engine": "hf" in model specs
-   python -m ensemblehub.api --model_specs 'model_path:hf:cuda:0'
-   ```
-
-3. **Set environment variable:**
-   ```bash
-   export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-   python -m ensemblehub.api
-   ```
-
-### vLLM Layer Name Conflict Error
-
-If you encounter this error when using vLLM:
-```
-Duplicate layer name: model.layers.X.self_attn.attn
-```
-
-**Solutions:**
-
-1. **Use additional vLLM fixes (Recommended):**
-   ```bash
-   python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill \
-     --vllm_disable_sliding_window --vllm_max_model_len 32768
-   ```
-
-2. **Switch to HuggingFace engine (Most reliable):**
-   ```bash
-   python -m ensemblehub.api --model_specs 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B:hf:cuda:0'
-   ```
-
-### HuggingFace Meta Tensor Error
-
-If you encounter this error when using HuggingFace:
-```
-Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead
-```
-
-**Solutions:**
-
-1. **Use eager attention (Recommended):**
-   ```bash
-   python -m ensemblehub.api --hf_use_eager_attention
-   ```
-
-2. **Use auto device assignment:**
-   ```bash
-   python -m ensemblehub.api --model_specs 'model_path:hf:auto'
-   ```
-
-3. **Downgrade transformers:**
-   ```bash
-   pip install transformers==4.35.0
-   ```
-
-### Common Issues
-
-- **Memory errors**: Reduce batch size or use smaller models
-- **Import errors**: Ensure all dependencies are installed with `pip install -r requirements.txt`
-- **Model loading fails**: Check model paths and GPU memory availability
 
 ## ✍️ Extending
 

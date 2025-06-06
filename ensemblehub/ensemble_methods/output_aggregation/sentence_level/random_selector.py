@@ -29,7 +29,7 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
         max_tokens: int = 16384,
-        max_new_tokens_per_round: int = 256,
+        max_new_tokens_per_round: int = 32,
         is_chat: bool = False,
         **kwargs
     ) -> List[str]:  # 返回列表

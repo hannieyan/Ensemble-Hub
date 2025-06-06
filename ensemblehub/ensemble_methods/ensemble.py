@@ -121,7 +121,7 @@ class EnsembleFramework:
         self,
         examples: List,
         model_specs: List[Dict[str, Any]],
-        generators,
+        generator_pool: GeneratorPool,
         scorers,
         model_stats: Optional[Dict[str, Dict[str, float]]] = None,
         is_chat: bool = False,
@@ -133,7 +133,7 @@ class EnsembleFramework:
         Args:
             examples: List of input examples, each with instruction, input, output
             model_specs: List of model specifications
-            generators: Generator instances or pool
+            generator_pool: Generator pool
             scorers: Scorer instances or pool
             model_stats: Model statistics for selection
             is_chat: Whether the input examples are in chat format (list of dicts)
@@ -158,21 +158,16 @@ class EnsembleFramework:
         logger.info(f"🔗 Stage 2: Output Aggregation ({self.config.output_aggregation_method} - {self.aggregation_level})")
 
         # Get generators for selected models
-        if hasattr(generators, 'get_generator'):
-            # Generator pool
-            selected_generators = []
-            for spec in selected_specs:
-                gen = generators.get_generator(
-                    spec["path"],
-                    spec.get("engine", "hf"),
-                    spec.get("device"),
-                    spec.get("quantization", "none"),
-                    spec.get("enable_thinking", False)
-                )
-                selected_generators.append(gen)
-        else:
-            # Assume generators is already a list
-            selected_generators = generators[:len(selected_specs)]
+        selected_generators = []
+        for spec in selected_specs:
+            gen = generator_pool.get_generator(
+                spec["path"],
+                spec.get("engine", "hf"),
+                spec.get("device"),
+                spec.get("quantization", "none"),
+                spec.get("enable_thinking", False)
+            )
+            selected_generators.append(gen)
 
         # Run aggregation - output_aggregator should handle batch
         outputs = self.output_aggregator.aggregate_generation(
@@ -312,7 +307,7 @@ def run_ensemble(
     results = framework.ensemble(
         examples=examples,
         model_specs=model_specs,
-        generators=model_pool,
+        generator_pool=model_pool,
         scorers=scorers,
         model_stats=model_stats,
         max_tokens=max_tokens,
