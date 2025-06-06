@@ -5,4 +5,6 @@ loguru
 peft
 omegaconf
 ace_tools
+fastapi
+nvitop
 # vllm

@@ -172,11 +172,11 @@ def process_conversations(
     base_params = {
         "model_specs": model_specs_with_format,
         "reward_spec": api_config.reward_spec,
-        "ensemble_method": ensemble_config.output_aggregation_method,
+        "output_aggregation_method": ensemble_config.output_aggregation_method,
         "model_selection_method": ensemble_config.model_selection_method,
         "max_rounds": ensemble_config.max_rounds,
         "score_threshold": ensemble_config.score_threshold,
-        "max_tokens": request.max_tokens or (16 if not is_chat else 2048),
+        "max_tokens": request.max_tokens,
         "temperature": request.temperature,
         "top_p": request.top_p,
         "show_output_details": ensemble_config.show_output_details
@@ -204,7 +204,6 @@ def process_conversations(
         })
     
     # Process all examples uniformly through ensemble framework
-    # Run batch ensemble inference
     base_params["is_chat"] = is_chat
     
     # Debug log

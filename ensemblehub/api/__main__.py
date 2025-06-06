@@ -25,7 +25,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_selection_method", type=str, default="all", 
                        choices=["zscore", "all", "random"],
                        help="Model selection method (default: all)")
-    parser.add_argument("--output_aggregation_method", type=str, default="loop",
+    parser.add_argument("--output_aggregation_method", type=str, default=None,
                        choices=["reward_based", "progressive", "random", "loop"],
                        help="Ensemble method (default: loop)")
     parser.add_argument("--progressive_mode", type=str, default="length",
