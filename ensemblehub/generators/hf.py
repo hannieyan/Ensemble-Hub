@@ -14,7 +14,7 @@ from transformers import (
     AutoTokenizer,
 )
 
-from .base import BaseGenerator, GenOutput, STOP_TOKENS_TEXT, trim_text
+from .base import BaseGenerator, GenOutput, STOP_TOKENS_TEXT
 
 logger = logging.getLogger("ensemble_inference")
 
@@ -79,8 +79,10 @@ class HFGenerator(BaseGenerator):
     def __post_init__(self):
         """Initialize after model loading"""
         # Optional stop string list
-        self.stop_strings = list(STOP_TOKENS_TEXT) + [
-            self.tokenizer.decode([self.tokenizer.eos_token_id], skip_special_tokens=False)
+        self.stop_strings = [
+            "<|endoftext|>",  # Common end token for many models
+            "<|im_end|>",  # Qwen models use this as end token
+            "<｜end▁of▁sentence｜>",  # Deepseek models use this as end token
         ]
         
         logger.info(f"🏗️  HFGenerator {self.name} initialized")
@@ -100,14 +102,21 @@ class HFGenerator(BaseGenerator):
         stop_strings: Optional[Union[str, List[str]]] = None,
         seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
-        
+
         # Use lock to prevent concurrent access issues
         with self._lock:
+            # stop_strings
+            stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
+
             # Auto-detect format: if input has "prompt" field, it's text completion
             if not is_chat:
                 # Text completion mode - use raw prompt without template
                 logger.info(f"  Raw prompt: {inputs[0]}")
-                ids = self.tokenizer(inputs, return_tensors="pt", padding=True).to(self.device)
+                ids = self.tokenizer(
+                    inputs,
+                    return_tensors="pt",
+                    padding=True
+                ).to(self.device)
             else:
                 # Chat completion mode - use apply_chat_template
                 logger.info(f"  Messages: {inputs[0]}")
@@ -135,7 +144,8 @@ class HFGenerator(BaseGenerator):
                 "pad_token_id": self.tokenizer.eos_token_id,
                 "eos_token_id": self.tokenizer.eos_token_id,
                 "repetition_penalty": repetition_penalty,
-                "tokenizer": self.tokenizer
+                "tokenizer": self.tokenizer,
+                "stop_strings": stop_strings,
             }
             
             if temperature > 0:
@@ -155,32 +165,28 @@ class HFGenerator(BaseGenerator):
             batch_size = outputs.shape[0]
 
             for i in range(batch_size):
-                # Get input length for this sample
-                input_length = ids["input_ids"][i].shape[0]
-
-                # Extract generated tokens for this sample
-                output_ids = outputs[i]  # Shape: [seq_len]
-                generated_ids = output_ids[input_length:]
-
-                # Check if generation ended with EOS
-                ended = self.tokenizer.eos_token_id in generated_ids.tolist()
-
-                # Decode the generated text
+                # Extract generated tokens
+                generated_ids = outputs[i][ids["input_ids"][i].shape[0]:]
+                generated_list = generated_ids.tolist()
+                
+                # Check for EOS token and truncate if found
+                ended = False
+                if self.tokenizer.eos_token_id in generated_list:
+                    eos_pos = generated_list.index(self.tokenizer.eos_token_id)
+                    generated_ids = generated_ids[:eos_pos]
+                    ended = True
+                
+                # Decode text
                 txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
+                
+                # Find first stop string position
+                positions = [txt.find(s) for s in stop_strings if s in txt]
+                if positions:
+                    txt = txt[:min(positions)]
+                    ended = True
+                
+                results.append(GenOutput(txt, ended))
 
-                # Handle stop strings
-                if stop_strings:
-                    s_list = [stop_strings] if isinstance(stop_strings, str) else stop_strings
-                    for s in s_list:
-                        if s in txt:
-                            txt = txt.split(s)[0]
-                            ended = True
-                            break
-
-                # Add result
-                results.append(GenOutput(trim_text(txt) if not ended else txt, ended))
-
-            # 永远返回列表
             return results
 
 
