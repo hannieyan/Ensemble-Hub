@@ -111,21 +111,22 @@ class HFGenerator(BaseGenerator):
             # Auto-detect format: if input has "prompt" field, it's text completion
             if not is_chat:
                 # Text completion mode - use raw prompt without template
-                logger.info(f"  Raw prompt: {inputs[0]}")
+                # logger.info(f"  Raw prompt: {inputs[0]}")
                 ids = self.tokenizer(
                     inputs,
                     return_tensors="pt",
-                    padding=True
+                    padding=True,
+                    padding_side='left',
                 ).to(self.device)
             else:
                 # Chat completion mode - use apply_chat_template
-                logger.info(f"  Messages: {inputs[0]}")
+                # logger.info(f"  Messages: {inputs[0]}")
                 # Check if tokenizer supports enable_thinking
                 ids = self.tokenizer.apply_chat_template(
                     inputs,
-                    tokenize=False,
                     add_generation_prompt=True,
                     padding=True,
+                    padding_side='left',
                     enable_thinking=self.enable_thinking,
                     return_tensors="pt",
                     continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
@@ -141,8 +142,6 @@ class HFGenerator(BaseGenerator):
             # Generate with direct parameters
             generate_kwargs = {
                 "max_new_tokens": max_tokens,
-                "pad_token_id": self.tokenizer.eos_token_id,
-                "eos_token_id": self.tokenizer.eos_token_id,
                 "repetition_penalty": repetition_penalty,
                 "tokenizer": self.tokenizer,
                 "stop_strings": stop_strings,
@@ -158,36 +157,25 @@ class HFGenerator(BaseGenerator):
             else:
                 generate_kwargs["do_sample"] = False
                 
-            outputs = self.model.generate(**ids, **generate_kwargs)
+            outputs = self.model.generate(
+                input_ids=ids["input_ids"],
+                attention_mask=ids["attention_mask"],
+                **generate_kwargs
+            )
 
-            # Process each output in the batch
-            results = []
-            batch_size = outputs.shape[0]
-
-            for i in range(batch_size):
-                # Extract generated tokens
-                generated_ids = outputs[i][ids["input_ids"][i].shape[0]:]
-                generated_list = generated_ids.tolist()
-                
-                # Check for EOS token and truncate if found
-                ended = False
-                if self.tokenizer.eos_token_id in generated_list:
-                    eos_pos = generated_list.index(self.tokenizer.eos_token_id)
-                    generated_ids = generated_ids[:eos_pos]
-                    ended = True
-                
-                # Decode text
-                txt = self.tokenizer.decode(generated_ids, skip_special_tokens=False)
-                
-                # Find first stop string position
-                positions = [txt.find(s) for s in stop_strings if s in txt]
-                if positions:
-                    txt = txt[:min(positions)]
-                    ended = True
-                
-                results.append(GenOutput(txt, ended))
-
-            return results
+            # Extract generated tokens (all inputs have same length due to padding)
+            input_length = ids["input_ids"].shape[1]
+            generated_tokens = outputs[:, input_length:]
+            
+            # Batch decode all sequences with special tokens removed
+            texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+            
+            # Determine ended status based on token count
+            # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)
+            token_counts = [len(self.tokenizer(txt, add_special_tokens=False)["input_ids"]) for txt in texts]
+            ended_status = [count < max_tokens - 1 for count in token_counts]
+            
+            return [GenOutput(txt, ended) for txt, ended in zip(texts, ended_status)]
 
 
 
