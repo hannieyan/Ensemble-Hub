@@ -34,6 +34,9 @@ class RandomSentenceSelector(BaseSentenceAggregator):
         **kwargs
     ) -> List[str]:  # 返回列表
 
+        if len(generators) == 1:
+            max_rounds = 1  # If only one generator, no need for multiple rounds
+            max_new_tokens_per_round = max_tokens  # Use all tokens in one go
 
         batch_size = len(examples)
         available_gens = [g for g in generators]
