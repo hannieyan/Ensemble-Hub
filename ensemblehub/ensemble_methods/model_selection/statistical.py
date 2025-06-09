@@ -262,9 +262,9 @@ Can you solve this problem? Answer only with 'yes' or 'no': """
                 normalized_confidence = raw_confidence
                 if model_stats and spec["path"] in model_stats:
                     stats = model_stats[spec["path"]]
-                    if "conf_mean" in stats and "conf_std" in stats:
-                        # Z-score normalization: (raw - mean) / std
-                        normalized_confidence = (raw_confidence - stats["conf_mean"]) / max(stats["conf_std"], 1e-6)
+                    if "conf_mean" in stats:
+                        # Simple bias correction: raw - mean
+                        normalized_confidence = raw_confidence - stats["conf_mean"]
                         logger.debug(f"Model {spec['path']}: raw_conf={raw_confidence:.3f}, normalized_conf={normalized_confidence:.3f}")
                 
                 model_confidences.append((spec, normalized_confidence))
