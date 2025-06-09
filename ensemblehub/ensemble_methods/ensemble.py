@@ -17,9 +17,9 @@ from typing import List, Dict, Any, Optional
 
 from ensemblehub.generators import GeneratorPool
 from ensemblehub.scorers.base import ScorerPool
-from .model_selection.learned import LLMBlenderSelector, MetaLearningSelector
+from .model_selection.learned import MetaLearningSelector
 # Model Selection imports
-from .model_selection.statistical import ZScoreSelector, AllModelsSelector, RandomSelector
+from .model_selection.statistical import ZScoreSelector, AllModelsSelector, JudgmentSelector
 from .output_aggregation.sentence_level.progressive_selector import ProgressiveSelector
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
 # Output Aggregation imports
@@ -57,10 +57,9 @@ class EnsembleFramework:
     # Registry of available methods
     MODEL_SELECTORS = {
         "zscore": ZScoreSelector,
-        "all": AllModelsSelector, 
-        "random": RandomSelector,
-        "llm_blender": LLMBlenderSelector,
-        "meta_learning": MetaLearningSelector,
+        "all": AllModelsSelector,
+        "learned": MetaLearningSelector,
+        "model_judgment": JudgmentSelector,  # Alias for backward compatibility
     }
 
     # Unified registry with metadata
@@ -144,17 +143,29 @@ class EnsembleFramework:
         """
         
         logger.info(f"Running ensemble with config: selection={self.config.model_selection_method}, aggregation={self.config.output_aggregation_method}, batch_size={len(examples)}")
-        
+
+        # Load all generators first
+        all_generators = [
+            generator_pool.get_generator(
+                spec["path"],
+                spec.get("engine", "hf"),
+                spec.get("device"),
+                spec.get("quantization", "none"),
+                spec.get("enable_thinking", False)
+            )
+            for spec in model_specs
+        ]
+
         # Model selection stage
         selected_specs = self.model_selector.select_models(
             example=examples,
             model_specs=model_specs,
             model_stats=model_stats,
+            generator_pool=generator_pool,
             **kwargs
         )
         
         # Stage 2: Output Generation/Aggregation
-        assert selected_specs != [], "No models selected for aggregation. Check model selection configuration."
         logger.info(f"🔗 Stage 2: Output Aggregation ({self.config.output_aggregation_method} - {self.aggregation_level})")
 
         # Get generators for selected models

@@ -22,68 +22,6 @@ class LearnedSelector(BaseModelSelector):
         super().__init__(name)
 
 
-class LLMBlenderSelector(LearnedSelector):
-    """
-    LLM-Blender style model selection using a trained ranking model.
-    
-    This is a placeholder for future implementation of:
-    "LLM-Blender: Ensembling LLMs with Pairwise Ranking & Generative Fusion"
-    """
-    
-    def __init__(self, 
-                 ranker_model_path: str = None,
-                 max_models: int = 3,
-                 name: str = None):
-        super().__init__(name or "LLMBlenderSelector")
-        self.ranker_model_path = ranker_model_path
-        self.max_models = max_models
-        self.ranker_model = None
-        
-        if ranker_model_path:
-            self._load_ranker_model()
-    
-    def _load_ranker_model(self):
-        """
-        Load the ranker model for LLM-Blender.
-        This is a placeholder for future implementation.
-        """
-        logger.warning("LLM-Blender ranker model loading not implemented yet")
-        # TODO: Implement actual model loading
-        # from transformers import AutoModel, AutoTokenizer
-        # self.ranker_model = AutoModel.from_pretrained(self.ranker_model_path)
-        # self.ranker_tokenizer = AutoTokenizer.from_pretrained(self.ranker_model_path)
-    
-    def select_models(
-        self,
-        example: Dict[str, Any],
-        model_specs: List[Dict[str, Any]],
-        model_stats: Optional[Dict[str, Dict[str, float]]] = None,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
-        """
-        Select models using LLM-Blender style ranking.
-        
-        Currently falls back to returning all models.
-        TODO: Implement actual LLM-Blender logic.
-        """
-        logger.warning("LLM-Blender selection not implemented yet, returning all models")
-        
-        # Placeholder implementation
-        if self.ranker_model is None:
-            logger.info("No ranker model loaded, selecting all models")
-            return model_specs
-        
-        # TODO: Implement actual ranking logic
-        # 1. Generate candidates with all models
-        # 2. Use ranker model to score pairs
-        # 3. Select top-k models based on ranking scores
-        
-        # For now, just return the first max_models
-        selected = model_specs[:self.max_models]
-        logger.info(f"Selected {len(selected)} models (placeholder): {[s['path'] for s in selected]}")
-        return selected
-
-
 class MetaLearningSelector(LearnedSelector):
     """
     Meta-learning based model selection.

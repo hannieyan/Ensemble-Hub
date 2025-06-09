@@ -8,7 +8,7 @@ Two main approaches:
 """
 
 from .base import BaseModelSelector
-from .statistical import StatisticalSelector, ZScoreSelector, AllModelsSelector, RandomSelector
+from .statistical import StatisticalSelector, ZScoreSelector, AllModelsSelector, JudgmentSelector
 from .learned import LearnedSelector
 
 __all__ = [
@@ -16,6 +16,6 @@ __all__ = [
     "StatisticalSelector", 
     "ZScoreSelector",
     "AllModelsSelector",
-    "RandomSelector",
-    "LearnedSelector"
+    "LearnedSelector",
+    "JudgmentSelector"
 ]

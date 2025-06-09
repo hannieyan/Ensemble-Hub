@@ -23,7 +23,7 @@ if __name__ == "__main__":
     
     # Ensemble configuration
     parser.add_argument("--model_selection_method", type=str, default="all", 
-                       choices=["zscore", "all", "random"],
+                       choices=["zscore", "all", "model_judgment"],
                        help="Model selection method (default: all)")
     parser.add_argument("--output_aggregation_method", type=str, default=None,
                        choices=["reward_based", "progressive", "random", "loop"],

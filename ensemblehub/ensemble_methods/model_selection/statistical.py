@@ -196,29 +196,124 @@ class AllModelsSelector(StatisticalSelector):
         return model_specs
 
 
-class RandomSelector(StatisticalSelector):
+
+class JudgmentSelector(StatisticalSelector):
     """
-    Randomly select a subset of models.
+    Select models based on judgment scores.
+    This is a placeholder for more complex judgment-based selection.
     """
-    
-    def __init__(self, k: int = 2, name: str = None):
-        super().__init__(name or f"RandomSelector(k={k})")
-        self.k = k
-    
+
+    def __init__(self, name: str = None):
+        super().__init__(name or "JudgmentSelector")
+
     def select_models(
         self,
-        example: Dict[str, Any],
+        example: List[str],
         model_specs: List[Dict[str, Any]],
         model_stats: Optional[Dict[str, Dict[str, float]]] = None,
+        generator_pool: Optional[GeneratorPool] = None,
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Randomly select k models.
+        Select one model based on self-judgment confidence (P_yes - P_no).
+        Simplified for single sample input.
+        
+        Args:
+            example: List of problem strings (assumes single sample)
+            model_specs: List of model specifications
+            model_stats: Optional model statistics (not used)
+            generator_pool: Generator pool for model inference
+            **kwargs: Additional arguments
+            
+        Returns:
+            List with single selected model spec
         """
-        import random
+        if generator_pool is None:
+            generator_pool = self.generator_pool
+            
+        # Use only the first example for single sample case
+        problem = example[0]
         
-        k = min(self.k, len(model_specs))
-        selected = random.sample(model_specs, k)
+        # Create judgment prompt
+        judgment_prompt = f"""Please carefully assess whether you can solve this problem. Be cautious and avoid saying yes if you're not confident.
+
+Problem: {problem}
+
+Can you solve this problem? Answer only with 'yes' or 'no': """
         
-        logger.info(f"Randomly selected {len(selected)} models: {[s['path'] for s in selected]}")
-        return selected
+        # Collect confidence scores for each model
+        model_confidences = []
+        
+        for spec in model_specs:
+            # Get generator
+            gen = generator_pool.get_generator(
+                spec["path"],
+                spec.get("engine", "hf"),
+                spec.get("device"),
+                spec.get("quantization", "none"),
+                spec.get("enable_thinking", False)
+            )
+            
+            try:
+                # Get token probabilities for yes/no
+                confidence = self._get_token_confidence(gen, judgment_prompt)
+                model_confidences.append((spec, confidence))
+            except Exception as e:
+                logger.warning(f"Failed to get judgment from {spec['path']}: {e}")
+                # Default to neutral confidence
+                model_confidences.append((spec, 0.0))
+        
+        # Sort by confidence (P_yes - P_no) descending and select best
+        model_confidences.sort(key=lambda x: x[1], reverse=True)
+        selected_spec = model_confidences[0][0]
+        
+        logger.info(f"Selected model: {selected_spec['path']} with confidence: {model_confidences[0][1]:.3f}")
+        
+        return [selected_spec]
+    
+    def _get_token_confidence(self, gen, prompt):
+        """Get P_yes - P_no confidence score by extracting token probabilities."""
+        # Tokenize prompt
+        inputs = gen.tokenizer(prompt, return_tensors="pt").to(gen.device)
+        
+        # Generate with model to get logits
+        with torch.no_grad():
+            outputs = gen.model.generate(
+                **inputs,
+                max_new_tokens=1,  # Only need first token
+                return_dict_in_generate=True,
+                output_scores=True,
+                do_sample=False
+            )
+            
+            # Get logits for the generated token (first new token)
+            logits = outputs.scores[0]  # Shape: [1, vocab_size]
+        
+        # Get token IDs for "yes" and "no" 
+        yes_tokens = gen.tokenizer.encode("yes", add_special_tokens=False)
+        no_tokens = gen.tokenizer.encode("no", add_special_tokens=False)
+        yes_tokens_cap = gen.tokenizer.encode("Yes", add_special_tokens=False)
+        no_tokens_cap = gen.tokenizer.encode("No", add_special_tokens=False)
+        
+        # Get all possible IDs
+        yes_ids = list(set(yes_tokens + yes_tokens_cap))
+        no_ids = list(set(no_tokens + no_tokens_cap))
+        
+        # Get probabilities
+        probs = torch.softmax(logits, dim=-1)
+        
+        # Sum probabilities for all yes/no variants
+        p_yes = sum(probs[0, token_id].item() for token_id in yes_ids if token_id < probs.shape[1])
+        p_no = sum(probs[0, token_id].item() for token_id in no_ids if token_id < probs.shape[1])
+        
+        # Normalize and compute confidence
+        total = p_yes + p_no
+        if total > 0:
+            p_yes_norm = p_yes / total
+            p_no_norm = p_no / total
+            confidence = p_yes_norm - p_no_norm
+        else:
+            confidence = 0.0
+        
+        return confidence
+
