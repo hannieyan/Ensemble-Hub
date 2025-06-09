@@ -256,8 +256,18 @@ Can you solve this problem? Answer only with 'yes' or 'no': """
             
             try:
                 # Get token probabilities for yes/no
-                confidence = self._get_token_confidence(gen, judgment_prompt)
-                model_confidences.append((spec, confidence))
+                raw_confidence = self._get_token_confidence(gen, judgment_prompt)
+                
+                # Normalize confidence using model stats if available
+                normalized_confidence = raw_confidence
+                if model_stats and spec["path"] in model_stats:
+                    stats = model_stats[spec["path"]]
+                    if "conf_mean" in stats and "conf_std" in stats:
+                        # Z-score normalization: (raw - mean) / std
+                        normalized_confidence = (raw_confidence - stats["conf_mean"]) / max(stats["conf_std"], 1e-6)
+                        logger.debug(f"Model {spec['path']}: raw_conf={raw_confidence:.3f}, normalized_conf={normalized_confidence:.3f}")
+                
+                model_confidences.append((spec, normalized_confidence))
             except Exception as e:
                 logger.warning(f"Failed to get judgment from {spec['path']}: {e}")
                 # Default to neutral confidence
