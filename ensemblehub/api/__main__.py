@@ -2,6 +2,10 @@
 Allow running the API server with python -m ensemblehub.api
 """
 
+import argparse
+import uvicorn
+import ray
+
 from .app import *
 import logging
 
@@ -12,10 +16,12 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    import argparse
-    import uvicorn
-    
+
     parser = argparse.ArgumentParser(description="Ensemble-Hub API Server")
+    
+    # YAML configuration file (takes precedence over other options)
+    parser.add_argument("--config", type=str, default=None, 
+                       help="Path to YAML configuration file (overrides all other options)")
     
     # Server configuration
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
@@ -74,21 +80,35 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Create app with configuration
-    app_configured = create_app_with_config(
-        model_selection_method=args.model_selection_method,
-        output_aggregation_method=args.output_aggregation_method,
-        progressive_mode=args.progressive_mode,
-        length_thresholds=args.length_thresholds,
-        special_tokens=args.special_tokens,
-        max_rounds=args.max_rounds,
-        score_threshold=args.score_threshold,
-        show_output_details=args.show_output_details,
-        show_input_details=args.show_input_details,
-        enable_thinking=args.enable_thinking,
-        model_specs=args.model_specs,
-        hf_use_8bit=args.hf_use_8bit,
-        hf_use_4bit=args.hf_use_4bit
-    )
-    
-    uvicorn.run(app_configured, host=args.host, port=args.port)
+    # If config file is provided, it overrides everything else
+    if args.config:
+        app_configured = create_app_from_yaml(args.config)
+        # Load server settings from YAML if available
+        import yaml
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        server_config = config.get('server', {})
+        host = server_config.get('host', args.host)
+        port = server_config.get('port', args.port)
+    else:
+        # Create app with command line configuration
+        app_configured = create_app_with_config(
+            model_selection_method=args.model_selection_method,
+            output_aggregation_method=args.output_aggregation_method,
+            progressive_mode=args.progressive_mode,
+            length_thresholds=args.length_thresholds,
+            special_tokens=args.special_tokens,
+            max_rounds=args.max_rounds,
+            score_threshold=args.score_threshold,
+            show_output_details=args.show_output_details,
+            show_input_details=args.show_input_details,
+            enable_thinking=args.enable_thinking,
+            model_specs=args.model_specs,
+            hf_use_8bit=args.hf_use_8bit,
+            hf_use_4bit=args.hf_use_4bit
+        )
+        host = args.host
+        port = args.port
+
+    ray.init()
+    uvicorn.run(app_configured, host=host, port=port)

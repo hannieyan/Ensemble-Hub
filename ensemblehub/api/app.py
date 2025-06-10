@@ -16,6 +16,8 @@ import time
 import uuid
 import logging
 import json
+import yaml
+import os
 
 # Import ensemble framework
 from ensemblehub.ensemble_methods.ensemble import run_ensemble, get_default_model_stats
@@ -113,41 +115,99 @@ app = FastAPI(
 
 # Global configuration
 class APIConfig:
-    def __init__(self):
+    def __init__(self, config_file: Optional[str] = None):
+        """Initialize API configuration from YAML file or defaults"""
+        
+        if config_file and os.path.exists(config_file):
+            logger.info(f"Loading configuration from {config_file}")
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f)
+            self._load_from_yaml(config)
+        else:
+            self._load_defaults()
+        
+        # Initialize pools
+        self.generator_pool = GeneratorPool()
+        self.scorer_pool = ScorerPool()
+        self.model_stats = get_default_model_stats()
+    
+    def _load_defaults(self):
+        """Load default configuration"""
         # Debug settings
         self.show_input_details = False
         self.enable_thinking = False
         
         # Default model specifications
         self.model_specs = [
-            {"path": "Qwen/Qwen2.5-1.5B-Instruct",                "engine": "hf", "device": "mps"},  # Larger model
-            {"path": "Qwen/Qwen2.5-0.5B-Instruct",                "engine": "hf", "device": "mps"},  # Smaller model
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "engine": "hf",   "device": "cuda:0"},
-            # {"path": "Qwen/Qwen3-4B",                             "engine": "hf",   "device": "cuda:0"},
-            # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf",   "device": "cuda:6"},
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",   "engine": "hf",   "device": "cuda:1"},
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",  "engine": "hf",   "device": "cuda:2"},
-            # {"path": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",  "engine": "hf",   "device": "cuda:3"},
+            {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "mps"},
+            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "mps"},
         ]
         
         # Default reward specifications
-        self.reward_spec = [
-            # {"path": "Qwen/Qwen2.5-Math-PRM-7B",                  "engine": "hf_rm",  "device": "cuda:0", "weight": 0.2},
-            # {"path": "http://localhost:8000/v1/score/evaluation", "engine": "api",                        "weight": 0.4},
-            # {"path": "Qwen/Qwen2.5-Math-7B-Instruct",             "engine": "hf_gen", "device": "cuda:0", "weight": 1.0},
-        ]
+        self.reward_spec = []
         
         # Default ensemble configuration
         self.default_ensemble_config = EnsembleConfig(
-            output_aggregation_method="loop",  # Use round-robin for cycling
-            model_selection_method="all",  # No model selection, use all models
+            output_aggregation_method="loop",
+            model_selection_method="all",
             show_output_details=False
         )
         
-        # Initialize pools
-        self.generator_pool = GeneratorPool()
-        self.scorer_pool = ScorerPool()
-        self.model_stats = get_default_model_stats()
+        # Engine options
+        self.engine_options = {
+            "vllm": {},
+            "hf": {}
+        }
+    
+    def _load_from_yaml(self, config: Dict[str, Any]):
+        """Load configuration from parsed YAML"""
+        
+        # Debug settings
+        debug_config = config.get("debug", {})
+        self.show_input_details = debug_config.get("show_input_details", False)
+        self.show_output_details = debug_config.get("show_output_details", False)
+        self.enable_thinking = debug_config.get("enable_thinking", False)
+        
+        # Model specifications
+        self.model_specs = config.get("model_specs", []) or []
+        
+        # Reward specifications
+        self.reward_spec = config.get("reward_specs", []) or []
+        
+        # Ensemble configuration
+        ensemble_config = config.get("ensemble", {})
+        
+        # Handle progressive settings
+        progressive_config = ensemble_config.get("progressive", {})
+        length_thresholds = progressive_config.get("length_thresholds", [1000, 2000, 3000])
+        special_tokens = progressive_config.get("special_tokens", [r"<\think>"])
+        
+        # Create ensemble config
+        self.default_ensemble_config = EnsembleConfig(
+            model_selection_method=ensemble_config.get("model_selection_method", "all"),
+            output_aggregation_method=ensemble_config.get("output_aggregation_method", "loop"),
+            progressive_mode=progressive_config.get("mode", "length"),
+            length_thresholds=length_thresholds,
+            special_tokens=special_tokens,
+            max_rounds=ensemble_config.get("max_rounds", 500),
+            score_threshold=ensemble_config.get("score_threshold", -2.0),
+            show_output_details=debug_config.get("show_output_details", False),
+            enable_thinking=self.enable_thinking
+        )
+        
+        # Engine options
+        self.engine_options = config.get("engine_options", {
+            "vllm": {},
+            "hf": {}
+        })
+        
+        # Apply global quantization settings to model specs if specified
+        hf_options = self.engine_options.get("hf", {})
+        if hf_options.get("use_8bit") or hf_options.get("use_4bit"):
+            quantization = "8bit" if hf_options.get("use_8bit") else "4bit"
+            for spec in self.model_specs:
+                if spec.get("engine") == "hf" and "quantization" not in spec:
+                    spec["quantization"] = quantization
 
 # Global API configuration
 api_config = APIConfig()
@@ -165,7 +225,7 @@ def process_conversations(
     model_specs_with_format = []
     for spec in api_config.model_specs:
         spec_copy = spec.copy()
-        spec_copy["enable_thinking"] = api_config.enable_thinking
+        spec_copy["enable_thinking"] = spec.get("enable_thinking", api_config.enable_thinking)
         model_specs_with_format.append(spec_copy)
     
     # Prepare common ensemble parameters
@@ -445,6 +505,26 @@ def get_config():
     }
 
 
+def create_app_from_yaml(config_file: str) -> FastAPI:
+    """Create FastAPI app from YAML configuration file"""
+    global api_config
+    
+    # Reinitialize api_config with YAML file
+    api_config = APIConfig(config_file=config_file)
+    
+    logger.info(f"API initialized from {config_file}")
+    logger.info(f"  Model selection: {api_config.default_ensemble_config.model_selection_method}")
+    logger.info(f"  Output aggregation method: {api_config.default_ensemble_config.output_aggregation_method}")
+    logger.info(f"  Max rounds: {api_config.default_ensemble_config.max_rounds}")
+    logger.info(f"  Show output details: {api_config.default_ensemble_config.show_output_details}")
+    logger.info(f"  Show input details: {api_config.show_input_details}")
+    logger.info(f"  Enable thinking: {api_config.enable_thinking}")
+    logger.info(f"  Models: {api_config.model_specs}")
+    logger.info(f"  Rewards: {api_config.reward_spec}")
+    
+    return app
+
+
 def create_app_with_config(
     model_selection_method: str = "all",
     output_aggregation_method: str = "loop",
@@ -458,10 +538,19 @@ def create_app_with_config(
     enable_thinking: bool = False,
     model_specs: str = None,
     hf_use_8bit: bool = False,
-    hf_use_4bit: bool = False
+    hf_use_4bit: bool = False,
+    config_file: str = None
 ) -> FastAPI:
-    """Create FastAPI app with custom ensemble configuration"""
+    """Create FastAPI app with custom ensemble configuration
     
+    If config_file is provided, it will override all other parameters.
+    """
+    
+    # If YAML config file is provided, use it instead
+    if config_file:
+        return create_app_from_yaml(config_file)
+    
+    # Otherwise use command line parameters
     # Parse parameters
     length_threshold_list = [int(x.strip()) for x in length_thresholds.split(",")] if length_thresholds else [1000, 2000, 3000]
     special_token_list = [x.strip() for x in special_tokens.split(",")] if special_tokens else [r"<\think>"]

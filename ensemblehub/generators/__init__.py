@@ -2,7 +2,7 @@
 Generator modules for different inference backends
 """
 from .base import BaseGenerator, GenOutput
-from .hf import HFGenerator
+from .hf_engine import HFGenerator
 from .vllm import VLLMGenerator
 from .pool import GeneratorPool
 

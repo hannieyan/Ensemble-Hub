@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional, Callable
 import torch
 import torch.nn.functional as F
+import ray
 
 from .base import BaseModelSelector
 from ...generators import GeneratorPool
@@ -22,7 +23,6 @@ class StatisticalSelector(BaseModelSelector):
     
     def __init__(self, name: str = None):
         super().__init__(name)
-        self.generator_pool = GeneratorPool()
 
 
 class ZScoreSelector(StatisticalSelector):
@@ -199,8 +199,7 @@ class AllModelsSelector(StatisticalSelector):
 
 class JudgmentSelector(StatisticalSelector):
     """
-    Select models based on judgment scores.
-    This is a placeholder for more complex judgment-based selection.
+    Select models based on judgment scores using Ray generators.
     """
 
     def __init__(self, name: str = None):
@@ -211,7 +210,7 @@ class JudgmentSelector(StatisticalSelector):
         example: List[str],
         model_specs: List[Dict[str, Any]],
         model_stats: Optional[Dict[str, Dict[str, float]]] = None,
-        generator_pool: Optional[GeneratorPool] = None,
+        generators = None,
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
@@ -221,15 +220,15 @@ class JudgmentSelector(StatisticalSelector):
         Args:
             example: List of problem strings (assumes single sample)
             model_specs: List of model specifications
-            model_stats: Optional model statistics (not used)
-            generator_pool: Generator pool for model inference
+            model_stats: Optional model statistics for normalization
+            generators: Dict of Ray remote generators
             **kwargs: Additional arguments
             
         Returns:
             List with single selected model spec
         """
-        if generator_pool is None:
-            generator_pool = self.generator_pool
+        if generators is None:
+            raise ValueError("generators parameter is required for JudgmentSelector")
             
         # Use only the first example for single sample case
         problem = example[0]
@@ -237,41 +236,29 @@ class JudgmentSelector(StatisticalSelector):
         # Create judgment prompt
         judgment_prompt = f"""Please carefully assess whether you can solve this problem. Be cautious and avoid saying yes if you're not confident.
 
-Problem: {problem}
-
-Can you solve this problem? Answer only with 'yes' or 'no': """
+        Problem: {problem}
+        
+        Can you solve this problem? Answer only with 'yes' or 'no': """
         
         # Collect confidence scores for each model
         model_confidences = []
         
         for spec in model_specs:
-            # Get generator
-            gen = generator_pool.get_generator(
-                spec["path"],
-                spec.get("engine", "hf"),
-                spec.get("device"),
-                spec.get("quantization", "none"),
-                spec.get("enable_thinking", False)
-            )
+            model_path = spec["path"]
             
-            try:
-                # Get token probabilities for yes/no
-                raw_confidence = self._get_token_confidence(gen, judgment_prompt)
-                
-                # Normalize confidence using model stats if available
-                normalized_confidence = raw_confidence
-                if model_stats and spec["path"] in model_stats:
-                    stats = model_stats[spec["path"]]
-                    if "conf_mean" in stats:
-                        # Simple bias correction: raw - mean
-                        normalized_confidence = raw_confidence - stats["conf_mean"]
-                        logger.debug(f"Model {spec['path']}: raw_conf={raw_confidence:.3f}, normalized_conf={normalized_confidence:.3f}")
-                
-                model_confidences.append((spec, normalized_confidence))
-            except Exception as e:
-                logger.warning(f"Failed to get judgment from {spec['path']}: {e}")
-                # Default to neutral confidence
-                model_confidences.append((spec, 0.0))
+            # Get token probabilities for yes/no using Ray
+            raw_confidence = ray.get(generators[model_path].get_token_confidence.remote(judgment_prompt))
+            
+            # Normalize confidence using model stats if available
+            normalized_confidence = raw_confidence
+            if model_stats and model_path in model_stats:
+                stats = model_stats[model_path]
+                if "conf_mean" in stats:
+                    # Simple bias correction: raw - mean
+                    normalized_confidence = raw_confidence - stats["conf_mean"]
+                    logger.debug(f"Model {model_path}: raw_conf={raw_confidence:.3f}, normalized_conf={normalized_confidence:.3f}")
+            
+            model_confidences.append((spec, normalized_confidence))
         
         # Sort by confidence (P_yes - P_no) descending and select best
         model_confidences.sort(key=lambda x: x[1], reverse=True)

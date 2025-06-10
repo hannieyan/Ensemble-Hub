@@ -7,4 +7,17 @@ omegaconf
 ace_tools
 fastapi
 nvitop
-# vllm
+pandas
+sympy
+fire
+jieba
+nltk
+tqdm
+pydantic
+uvicorn
+requests
+matplotlib
+numpy
+ray
+accelerate
+pyyaml

@@ -6,10 +6,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
-from .base import BaseGenerator
-from .hf import HFGenerator
+from .hf_engine import HFGenerator
 from .vllm import VLLMGenerator
 
 # Optional Ray-based vLLM
@@ -24,7 +23,7 @@ logger = logging.getLogger("ensemble_inference")
 
 class GeneratorPool:
     """Caches all loaded generators and reward models"""
-    _gen_cache: Dict[Tuple[str, str, str, str, bool], BaseGenerator] = {}  # (engine, path, quantization, device, enable_thinking)
+    _gen_cache: Dict[Tuple[str, str, str, str, bool]] = {}  # (engine, path, quantization, device, enable_thinking)
     _reward_cache: Dict[str, str] = {}
     _vllm_lock = threading.Lock()  # Lock for vLLM initialization
     _hf_lock = threading.Lock()  # Lock for HF model initialization
@@ -32,7 +31,7 @@ class GeneratorPool:
     _initialized_devices = set()  # Track which devices have been initialized
 
     @classmethod
-    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none", enable_thinking: bool = True) -> BaseGenerator:
+    def get_generator(cls, path: str, engine: str = "hf", device: Optional[str] = None, quantization: str = "none", enable_thinking: bool = True, **kwargs) -> Any:
         """
         Load a generator model (e.g., HF or vLLM) to a specified device (e.g., 'cuda:0', 'cpu').
         """
@@ -47,7 +46,7 @@ class GeneratorPool:
                 with cls._hf_lock:
                     # Double-check if another thread already initialized it
                     if key not in cls._gen_cache:
-                        cls._gen_cache[key] = HFGenerator(path, device=resolved_device, quantization=quantization, enable_thinking=enable_thinking)
+                        cls._gen_cache[key] = HFGenerator(path, quantization=quantization, enable_thinking=enable_thinking)
             elif engine == "vllm":
                 # Use lock to prevent concurrent vLLM initialization
                 with cls._vllm_lock:

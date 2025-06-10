@@ -5,6 +5,7 @@ Loop sentence selection (migrated from loop.py).
 import logging
 from copy import deepcopy
 from typing import List, Dict, Any, Tuple, Union
+import ray
 
 from .base import BaseSentenceAggregator, ModelAttribution
 
@@ -16,6 +17,9 @@ class LoopSelector(BaseSentenceAggregator):
     Loop selection of sentences from generators.
     Migrated from ensemble_methods/loop.py.
     """
+    
+    # Class-level round counter shared across all instances
+    _global_round = 0
     
     def __init__(self, max_repeat: int = 3, name: str = None):
         super().__init__(name or "LoopSelector")
@@ -64,13 +68,15 @@ class LoopSelector(BaseSentenceAggregator):
             active_indices = [i for i in range(batch_size) if not finished[i]]
 
             # Check if any sample exceeds max_tokens and mark as finished
-            if available_gens and hasattr(available_gens[0], 'tokenizer'):
-                tok = available_gens[0].tokenizer
-                for i, active_idx in enumerate(active_indices[:]):
-                    # Check current output length
-                    current_length = len(tok.encode(results[active_idx]))
-                    if current_length >= max_tokens:
-                        logger.info(f"Example {active_idx}: Reached max_tokens ({current_length}/{max_tokens})")
+            if available_gens:
+                # Get token counts for all active results at once
+                active_results = [results[idx] for idx in active_indices]
+                token_counts = ray.get(available_gens[0].count_tokens.remote(active_results))
+                
+                # Check each result and mark finished if exceeds max_tokens
+                for i, (active_idx, token_count) in enumerate(zip(active_indices[:], token_counts)):
+                    if token_count >= max_tokens:
+                        logger.info(f"Example {active_idx}: Reached max_tokens ({token_count}/{max_tokens})")
                         finished[active_idx] = True
                         active_indices.remove(active_idx)
 
@@ -81,11 +87,12 @@ class LoopSelector(BaseSentenceAggregator):
                 logger.info("All examples finished due to length limits")
                 break
 
-            # Round-robin selection
-            gen_idx = (rnd - 1) % len(available_gens)
+            # Round-robin selection using global counter
+            LoopSelector._global_round += 1
+            gen_idx = (LoopSelector._global_round - 1) % len(available_gens)
             selected_generator = available_gens[gen_idx]
-            model_short = getattr(selected_generator, 'model_path', selected_generator.name).split('/')[-1]
-            logger.info(f"🔄 Round {rnd}: Using {model_short} (index {gen_idx + 1}/{len(available_gens)})")
+            model_short = ray.get(selected_generator.get_model_name.remote()).split('/')[-1]
+            logger.info(f"🔄 Round {rnd} (Global: {LoopSelector._global_round}): Using {model_short} (index {gen_idx + 1}/{len(available_gens)})")
 
             # Prepare generation parameters
             gen_kwargs = {
@@ -100,7 +107,7 @@ class LoopSelector(BaseSentenceAggregator):
                 gen_kwargs["stop_strings"] = kwargs["stop_strings"]
 
             # Generate for all active examples
-            outputs = selected_generator.generate(active_conversations, **gen_kwargs)
+            outputs = ray.get(selected_generator.generate.remote(active_conversations, **gen_kwargs))
 
             # Ensure outputs is a list
             if not isinstance(outputs, list):
@@ -120,7 +127,7 @@ class LoopSelector(BaseSentenceAggregator):
             # Process results for each active example
             for idx, (active_idx, output_text, eos) in enumerate(zip(active_indices, output_texts, ended_with_eos)):
                 # Record attribution
-                model_name = getattr(selected_generator, 'model_path', selected_generator.name)
+                model_name = ray.get(selected_generator.get_model_name.remote())
                 attributions[active_idx].add_segment(output_text, model_name, rnd)
 
                 # Check repetition

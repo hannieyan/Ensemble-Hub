@@ -15,6 +15,8 @@ import logging
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
+import ray
+import torch
 from ensemblehub.generators import GeneratorPool
 from ensemblehub.scorers.base import ScorerPool
 from .model_selection.learned import MetaLearningSelector
@@ -27,6 +29,7 @@ from .output_aggregation.sentence_level.reward_based import RewardBasedSelector
 from .output_aggregation.sentence_level.loop_selector import LoopSelector
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 from .output_aggregation.token_level.gac import GaCTokenAggregator
+from ..generators.hf_engine import get_remote_hf_generator_class
 
 logger = logging.getLogger(__name__)
 
@@ -145,40 +148,45 @@ class EnsembleFramework:
         logger.info(f"Running ensemble with config: selection={self.config.model_selection_method}, aggregation={self.config.output_aggregation_method}, batch_size={len(examples)}")
 
         # Load all generators first
-        all_generators = [
-            generator_pool.get_generator(
-                spec["path"],
-                spec.get("engine", "hf"),
-                spec.get("device"),
-                spec.get("quantization", "none"),
-                spec.get("enable_thinking", False)
-            )
-            for spec in model_specs
-        ]
+        generators = {}
+        
+        for spec in model_specs:
+            actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))
+
+            # Try to get existing actor first
+            try:
+                generator = ray.get_actor(spec["path"])
+                logger.info(f"✅ Reusing existing actor: {spec['path']}")
+            except ValueError:
+                # Actor doesn't exist, create new one
+                generator = actor.options(name=spec["path"]).remote(
+                    model_path=spec["path"],
+                    max_memory=spec.get("max_memory", None),
+                    dtype=torch.bfloat16,
+                    quantization=spec.get("quantization", "none"),
+                    enable_thinking=spec.get("enable_thinking", False),
+                )
+                logger.info(f"✅ Created new actor: {spec['path']}")
+            generators[spec["path"]] = generator
 
         # Model selection stage
+        logger.info(f"🎯 Stage 1: Model Selection ({self.config.model_selection_method})")
         selected_specs = self.model_selector.select_models(
             example=examples,
             model_specs=model_specs,
             model_stats=model_stats,
-            generator_pool=generator_pool,
+            generators=generators,  # Pass Ray generators to selector
             **kwargs
         )
-        
+
+        # Create selected generators dict from selected specs
+        selected_generators = [
+            generators[spec['path']] for spec in selected_specs if spec['path'] in generators
+        ]
+        logger.info(f"Selected {len(selected_generators)} models: {list(spec['path'] for spec in selected_specs)}")
+
         # Stage 2: Output Generation/Aggregation
         logger.info(f"🔗 Stage 2: Output Aggregation ({self.config.output_aggregation_method} - {self.aggregation_level})")
-
-        # Get generators for selected models
-        selected_generators = []
-        for spec in selected_specs:
-            gen = generator_pool.get_generator(
-                spec["path"],
-                spec.get("engine", "hf"),
-                spec.get("device"),
-                spec.get("quantization", "none"),
-                spec.get("enable_thinking", False)
-            )
-            selected_generators.append(gen)
 
         # Run aggregation - output_aggregator should handle batch
         outputs = self.output_aggregator.aggregate_generation(
