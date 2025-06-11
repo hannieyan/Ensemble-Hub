@@ -338,7 +338,7 @@ def root():
     """Root endpoint with API information"""
     return {
         "name": "Ensemble-Hub API",
-        "version": "3.0.0",
+        "version": "2.0.0",
         "description": "Unified ensemble inference with automatic batch detection",
         "endpoint": "/v1/chat/completions",
         "features": [
@@ -354,7 +354,7 @@ def status():
     """Health check endpoint"""
     return {
         "status": "ready",
-        "version": "3.0.0",
+        "version": "2.0.0",
         "available_methods": {
             "model_selection": ["zscore", "all", "random"],
             "output_aggregation_methods": ["progressive", "random", "loop", "reward_based"]

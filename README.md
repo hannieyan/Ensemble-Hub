@@ -133,9 +133,85 @@ python -m ensemblehub.inference \
 
 ### 🚀 Start the FastAPI
 
-#### Quick Start with Simple Configuration
+#### Option 1: YAML Configuration (Recommended)
+
+Create a YAML configuration file and use it to start the server:
 
 ```bash
+# Using the provided example configuration
+python -m ensemblehub.api --config examples/all_loop.yaml
+
+# Using custom configuration
+python -m ensemblehub.api --config my_config.yaml
+```
+
+**Example YAML Configuration (`my_config.yaml`):**
+```yaml
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Debug Settings
+debug:
+  show_input_details: false
+  show_output_details: true
+  enable_thinking: false
+
+# Model Specifications
+model_specs:
+  - path: "Qwen/Qwen2.5-1.5B-Instruct"
+    engine: "hf"
+    quantization: "4bit"
+    max_memory: {"0": "8GB", "cpu": "16GB"}
+  
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+    engine: "hf"
+    enable_thinking: true
+
+# Reward Model Specifications (optional)
+reward_specs:
+  - path: "Qwen/Qwen2.5-Math-PRM-7B"
+    engine: "hf_rm"
+    device: "cuda:0"
+    weight: 1.0
+
+# Ensemble Configuration
+ensemble:
+  model_selection_method: "all"  # Options: all, zscore, model_judgment, random
+  output_aggregation_method: "loop"  # Options: loop, progressive, random, reward_based
+  
+  # Progressive settings (for progressive method)
+  progressive:
+    mode: "length"  # Options: length, token
+    length_thresholds: [1000, 2000, 3000]
+    special_tokens: ["<\\think>"]
+  
+  max_rounds: 500
+  score_threshold: -2.0
+  
+  # Default generation parameters
+  generation:
+    max_tokens: null  # Auto-detect
+    temperature: 1.0
+    top_p: 1.0
+
+# Engine-specific Options
+engine_options:
+  vllm:
+    enforce_eager: false
+    max_model_len: 32768
+    gpu_memory_utilization: 0.8
+  
+  hf:
+    use_eager_attention: true
+    low_cpu_mem: true
+```
+
+#### Option 2: Command Line Arguments
+
+```bash
+# Quick start with simple configuration
 python -m ensemblehub.api \
    --model_specs '[
      {"path":"Qwen/Qwen2.5-0.5B-Instruct","engine":"hf","device":"cuda:0"},
@@ -143,6 +219,20 @@ python -m ensemblehub.api \
    ]' \
    --show_output_details \
    --output_aggregation_method random
+
+# Advanced ensemble configurations
+python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --max_rounds 5
+
+# Progressive ensemble with length-based switching
+python -m ensemblehub.api --output_aggregation_method progressive --progressive_mode length \
+  --length_thresholds 50,100,200 --max_rounds 3
+
+# Statistical model selection with reward-based aggregation
+python -m ensemblehub.api --model_selection_method zscore --output_aggregation_method reward_based \
+  --score_threshold -1.5 --max_rounds 10
+
+# Enable thinking mode for reasoning models (e.g., DeepSeek-R1)
+python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --enable_thinking
 ```
 
 #### Evaluate with lm-evaluation-harness
@@ -156,39 +246,7 @@ lm_eval --model openai-completions \
    --num_fewshot 5
 ```
 
-#### Advanced Configuration with Command Line Arguments
-
-```bash
-# Configure different ensemble methods
-python -m ensemblehub.api --model_selection_method all --output_aggregation_method random
-
-# Loop/Round-robin inference (循环推理)
-python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --max_rounds 5
-
-# Progressive ensemble with length-based switching
-python -m ensemblehub.api --output_aggregation_method progressive --progressive_mode length \
-  --length_thresholds 50,100,200 --max_rounds 3
-
-# Statistical model selection with reward-based aggregation
-python -m ensemblehub.api --model_selection_method zscore --output_aggregation_method reward_based \
-  --score_threshold -1.5 --max_rounds 10
-
-# Custom server configuration
-python -m ensemblehub.api --host 0.0.0.0 --port 9876 \
-  --output_aggregation_method loop --show_output_details
-
-# Enable thinking mode for reasoning models (e.g., DeepSeek-R1)
-python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --enable_thinking
-```
-
-**Available Configuration Options:**
-- **Model Selection**: `zscore` (statistical), `all` (use all models), `random`
-- **Output Aggregation Methods**: `reward_based`, `progressive`, `random`, `loop`
-- **Progressive Options**: `--progressive_mode`, `--length_thresholds`, `--special_tokens`
-- **General**: `--max_rounds`, `--score_threshold`, `--show_input_details`, `--show_output_details`
-- **Thinking Mode**: `--enable_thinking` (enables reasoning models' thinking process)
-
-> **Note**: Command line ensemble configuration only works with `python -m ensemblehub.api`. When using `uvicorn`, only server settings (host/port) are configurable.
+> **Note**: YAML configuration takes precedence over command line arguments. When using `--config`, other command line options are ignored.
 
 #### Testing the API
 
@@ -225,33 +283,18 @@ python -m ensemblehub.api --model_selection_method all --output_aggregation_meth
        }'
    ```
 
-For complete API documentation, visit: http://localhost:8000/docs
-
-
-
-## 🛠️ Troubleshooting
-
-
-## ✍️ Extending
-
-* **More backends** – plug in other model sources by subclassing `BaseGenerator` and registering it in the `ModelPool` (e.g. to use an OpenAI API model).
-* **Streaming answers** – wrap `run_ensemble()` in an async generator to yield partial results, and return via SSE or websockets for real-time streaming.
-* **Custom reward models** – implement a new scorer class (similar to `PRMScorer`) and swap it in via `ModelPool.get_reward` to test different reward functions.
-
 ## 📌 To-Do
 
 - [x] Multi-model inference
-- [x] Reward model selection
 - [x] HuggingFace backend
 - [x] FastAPI server with OpenAI-compatible endpoints
+- [x] Ray Serve integration
 - [x] Command line configuration for ensemble methods
-- [x] Model attribution tracking
-- [x] Progressive ensemble methods
 - [x] LM-evaluation-harness compatibility
+- [ ] Reward model selection
 - [ ] vLLM backends
 - [ ] API support for closed-source models
 - [ ] Streaming API interface (SSE)
-- [ ] Web interface for ensemble configuration
 - [ ] Advanced scorer aggregation methods
 
 ## 📝 Changelog

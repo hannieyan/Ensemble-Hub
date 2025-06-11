@@ -291,7 +291,19 @@ class HFGenerator:
             else:
                 token_counts.append(0)
         return token_counts
-    
+
+
+
+
+
+    # ================================================================================
+    # ========================= CUSTOM METHODS (NON-STANDARD) ========================
+    # ================================================================================
+    # The following methods are custom implementations specific to model_selection and
+    # output_aggregation modules, not part of the standard HFGenerator methods.
+    #
+    # IMPORTANT: When coding, minimize the use of these custom methods.
+    # ================================================================================
     
     def get_token_confidence(self, prompt: str) -> float:
         """Get P_yes - P_no confidence score by extracting token probabilities."""
