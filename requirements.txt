@@ -21,3 +21,4 @@ numpy
 ray
 accelerate
 pyyaml
+bitsandbytes

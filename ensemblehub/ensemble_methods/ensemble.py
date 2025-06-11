@@ -151,15 +151,14 @@ class EnsembleFramework:
         generators = {}
         
         for spec in model_specs:
-            actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))
-
             # Try to get existing actor first
             try:
                 generator = ray.get_actor(spec["path"])
                 logger.info(f"✅ Reusing existing actor: {spec['path']}")
             except ValueError:
                 # Actor doesn't exist, create new one
-                generator = actor.options(name=spec["path"]).remote(
+                actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))      # if only one GPU, set num_gpus to 0.5
+                generator = actor.options(name=spec["path"], lifetime="detached").remote(
                     model_path=spec["path"],
                     max_memory=spec.get("max_memory", None),
                     dtype=torch.bfloat16,
