@@ -27,6 +27,8 @@ class ProgressiveSelector(BaseSentenceAggregator):
         self,
         outline_max_tokens: int = 500,
         outline_prompt_template: Optional[str] = None,
+        final_prompt_template: Optional[str] = None,
+        template_language: str = "zh",
         name: str = None
     ):
         """
@@ -35,56 +37,43 @@ class ProgressiveSelector(BaseSentenceAggregator):
         Args:
             outline_max_tokens: Maximum tokens for the outline generation (default: 500)
             outline_prompt_template: Template for the outline prompt. Use {question} as placeholder.
-                                   If None, uses default template.
+                                   If None, uses default template based on template_language.
+            final_prompt_template: Template for the final answer prompt. Use {outline} as placeholder.
+                                 If None, uses default template based on template_language.
+            template_language: Language for default prompts ("zh" for Chinese, "en" for English)
             name: Optional name for the selector
         """
         super().__init__(name or "ProgressiveSelector")
         self.outline_max_tokens = outline_max_tokens
-        self.outline_prompt_template = outline_prompt_template or (
-            "请仔细分析以下问题，并列出一个简要的解答思路大纲。"
-            "只需要梳理解题思路和关键步骤，不需要详细解答。\n\n"
-            "问题：{question}\n\n"
-            "解答思路大纲："
-        )
+        self.template_language = template_language
+        
+        # Default templates based on language
+        if template_language == "en":
+            self.outline_prompt_template = outline_prompt_template or (
+                "Please carefully analyze the following question and provide a brief solution outline. "
+                "Focus on the key steps and approach without detailed solutions.\n\n"
+                "Question: {question}\n\n"
+                "Solution Outline:"
+            )
+            self.final_prompt_template = final_prompt_template or (
+                "Based on the following solution outline, please provide a detailed answer:\n\n"
+                "{outline}\n\n"
+                "Complete Solution:"
+            )
+        else:  # Default to Chinese
+            self.outline_prompt_template = outline_prompt_template or (
+                "请仔细分析以下问题，并列出一个简要的解答思路大纲。"
+                "只需要梳理解题思路和关键步骤，不需要详细解答。\n\n"
+                "问题：{question}\n\n"
+                "解答思路大纲："
+            )
+            self.final_prompt_template = final_prompt_template or (
+                "基于以下解题思路大纲，请详细解答问题：\n\n"
+                "{outline}\n\n"
+                "请给出完整的解答："
+            )
+        
         self._model_sizes = {}  # Cache for model sizes
-    
-    def _get_model_size(self, generator) -> float:
-        """
-        Estimate model size from generator.
-        Returns size in billions of parameters.
-        """
-        # First check if we can get the model name via ray
-        try:
-            model_name = ray.get(generator.get_model_name.remote())
-            model_name = model_name.lower()
-        except Exception:
-            # Fallback to direct attribute access
-            model_name = getattr(generator, 'model_path', '').lower()
-        
-        # Extract size from common naming patterns
-        import re
-        size_match = re.search(r'(\d+\.?\d*)b', model_name)
-        if size_match:
-            return float(size_match.group(1))
-        
-        # Common size mappings
-        size_patterns = [
-            (r'70b|72b', 70.0),
-            (r'30b|33b|34b', 30.0),
-            (r'13b|14b', 13.0),
-            (r'7b|8b', 7.0),
-            (r'3b', 3.0),
-            (r'1\.5b|1\.8b', 1.5),
-            (r'0\.5b|500m', 0.5),
-            (r'0\.1b|100m', 0.1),
-        ]
-        
-        for pattern, size in size_patterns:
-            if re.search(pattern, model_name):
-                return size
-        
-        # Default size if cannot determine
-        return 1.0
     
     def _select_two_largest_models(self, generators: List) -> Tuple[Any, Any]:
         """
@@ -97,7 +86,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
         # Get sizes for all generators
         gen_sizes = []
         for gen in generators:
-            size = self._get_model_size(gen)
+            size = ray.get(gen.get_model_size.remote())
             gen_sizes.append((gen, size))
             logger.info(f"Model size detected: {ray.get(gen.get_model_name.remote()) if hasattr(gen, 'get_model_name') else 'unknown'} = {size}B params")
         
@@ -116,7 +105,6 @@ class ProgressiveSelector(BaseSentenceAggregator):
     def aggregate_generation(
         self,
         generators: List,
-        scorers,
         examples: List[Union[str, List[Dict]]],
         max_rounds: int = 500,
         max_tokens: int = 16384,
@@ -265,7 +253,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
     ) -> str:
         """Generate final answer using the small model based on the outline."""
         # Prepare the input for the small model
-        final_prompt = f"基于以下解题思路大纲，请详细解答问题：\n\n{outline}\n\n请给出完整的解答："
+        final_prompt = self.final_prompt_template.format(outline=outline)
         
         if is_chat:
             # For chat format, create a conversation with the outline context
@@ -288,8 +276,11 @@ class ProgressiveSelector(BaseSentenceAggregator):
             final_conversation = f"{original_example}\n\n{final_prompt}"
         
         # Generate final answer
+        # The small model should generate the remaining tokens after outline
+        # But ensure it has enough space to generate a meaningful response
+        remaining_tokens = max(1000, max_tokens - self.outline_max_tokens)
         gen_kwargs = {
-            "max_tokens": max_tokens - self.outline_max_tokens,  # Reserve tokens for outline
+            "max_tokens": remaining_tokens,
             "temperature": kwargs.get("temperature", 0.7),
             "top_p": kwargs.get("top_p", 0.9),
             "is_chat": is_chat,

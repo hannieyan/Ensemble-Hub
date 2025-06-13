@@ -28,7 +28,6 @@ class LoopSelector(BaseSentenceAggregator):
     def aggregate_generation(
         self,
         generators: List,
-        scorers,
         examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
         max_tokens: int = 16384,

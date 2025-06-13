@@ -272,14 +272,11 @@ class HFGenerator:
             logger.error(f"Error in calculate_confidence for {self.name} with completion '{completion_text[:50]}...': {e}", exc_info=True)
             return None
 
-
     def get_model_name(self):
         return self.name
 
-
     def get_tokenizer(self):
         return self.tokenizer
-    
     
     def count_tokens(self, texts: List[str]) -> List[int]:
         """Count tokens for a list of texts"""
@@ -292,9 +289,10 @@ class HFGenerator:
                 token_counts.append(0)
         return token_counts
 
-
-
-
+    def get_model_size(self) -> float:
+        """Get model size in billions of parameters"""
+        total_params = sum(p.numel() for p in self.model.parameters())
+        return total_params / 1e9
 
     # ================================================================================
     # ========================= CUSTOM METHODS (NON-STANDARD) ========================

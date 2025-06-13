@@ -17,8 +17,6 @@ from typing import List, Dict, Any, Optional
 
 import ray
 import torch
-from ensemblehub.generators import GeneratorPool
-from ensemblehub.scorers.base import ScorerPool
 from .model_selection.learned import MetaLearningSelector
 # Model Selection imports
 from .model_selection.statistical import ZScoreSelector, AllModelsSelector, JudgmentSelector
@@ -71,7 +69,7 @@ class EnsembleFramework:
         "reward_based": (RewardBasedSelector, "sentence", ["exclude_self_scoring", "max_repeat", "name"]),
         "random": (RandomSentenceSelector, "sentence", ["max_repeat", "name"]),
         "loop": (LoopSelector, "sentence", ["max_repeat", "name"]),
-        "progressive": (ProgressiveSelector, "sentence", ["switch_mode", "length_thresholds", "special_tokens", "max_repeat", "name"]),
+        "progressive": (ProgressiveSelector, "sentence", ["outline_max_tokens", "outline_prompt_template", "final_prompt_template", "template_language", "name"]),
         
         # Token-level aggregators
         "gac": (GaCTokenAggregator, "token", None),
@@ -123,8 +121,6 @@ class EnsembleFramework:
         self,
         examples: List,
         model_specs: List[Dict[str, Any]],
-        generator_pool: GeneratorPool,
-        scorers,
         model_stats: Optional[Dict[str, Dict[str, float]]] = None,
         is_chat: bool = False,
         **kwargs
@@ -135,8 +131,6 @@ class EnsembleFramework:
         Args:
             examples: List of input examples, each with instruction, input, output
             model_specs: List of model specifications
-            generator_pool: Generator pool
-            scorers: Scorer instances or pool
             model_stats: Model statistics for selection
             is_chat: Whether the input examples are in chat format (list of dicts)
             **kwargs: Additional parameters
@@ -157,7 +151,7 @@ class EnsembleFramework:
                 logger.info(f"✅ Reusing existing actor: {spec['path']}")
             except ValueError:
                 # Actor doesn't exist, create new one
-                actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))      # if only one GPU, set num_gpus to 0.5
+                actor = get_remote_hf_generator_class(spec.get("num_gpus", 0.5 if torch.cuda.is_available() else 0))      # if only one GPU, set num_gpus to 0.5
                 generator = actor.options(name=spec["path"], lifetime="detached").remote(
                     model_path=spec["path"],
                     max_memory=spec.get("max_memory", None),
@@ -190,7 +184,6 @@ class EnsembleFramework:
         # Run aggregation - output_aggregator should handle batch
         outputs = self.output_aggregator.aggregate_generation(
             generators=selected_generators,
-            scorers=scorers,
             examples=examples,
             is_chat=is_chat,
             **kwargs
@@ -235,15 +228,12 @@ class EnsembleFramework:
 def run_ensemble(
     examples: List,
     model_specs: List[Dict] = None,
-    reward_spec: List[Dict] = None,
-    output_aggregation_method: str = "loop",
     model_selection_method: str = "zscore",
+    model_selection_params: Dict[str, Any] = None,
+    output_aggregation_method: str = "loop",
+    output_aggregation_params: Dict[str, Any] = None,
     max_tokens: int = None,
     max_rounds: int = 500,
-    score_threshold: float = -2.0,
-    progressive_mode: str = "length",
-    length_thresholds: List[int] = None,
-    special_tokens: List[str] = None,
     is_chat: bool = False,
     **kwargs
 ) -> List:
@@ -254,7 +244,12 @@ def run_ensemble(
         examples: List of input examples, each with "instruction", "input", "output"
         model_specs: List of model specifications with format:
             [{"path": "model/path", "engine": "hf", "device": "cuda:0", ...}, ...]
-        reward_spec: List of reward model specifications for scoring
+        model_selection_method: Model selection strategy:
+            - "all": Use all models
+            - "zscore": Statistical z-score based selection
+            - "random": Random model selection
+            - "llm_blender": LLM-Blender based selection
+        model_selection_params: Parameters for model selection method
         output_aggregation_method: Aggregation method for outputs:
             - "reward_based": Select based on reward scores
             - "random": Random selection
@@ -262,17 +257,9 @@ def run_ensemble(
             - "progressive": Progressive selection based on length/tokens
             - "gac": Token-level GAC aggregation
             - "distribution": Token-level distribution aggregation
-        model_selection_method: Model selection strategy:
-            - "all": Use all models
-            - "zscore": Statistical z-score based selection
-            - "random": Random model selection
-            - "llm_blender": LLM-Blender based selection
+        output_aggregation_params: Parameters for output aggregation method
         max_tokens: Maximum tokens to generate
         max_rounds: Maximum rounds for iterative methods
-        score_threshold: Score threshold for early stopping
-        progressive_mode: Mode for progressive selection ("length" or "token")
-        length_thresholds: Length thresholds for progressive selection
-        special_tokens: Special tokens to trigger mode switching
         is_chat: Whether examples are in chat format
         **kwargs: Additional generation parameters
         
@@ -285,38 +272,16 @@ def run_ensemble(
             - "attribution": Model attribution data (if available)
     """
 
-    # Initialize pools
-    model_pool = GeneratorPool()
-    scorers = ScorerPool()
 
     # Load model statistics
     model_stats = get_default_model_stats()
 
-    # Load external scorers
-    for spec in reward_spec:
-        try:
-            scorers.get_scorer(spec)
-            logger.info(f"✅ Loaded scorer: {spec.get('path', 'unknown')}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to load scorer {spec.get('path', 'unknown')}: {e}")
-
-    # Handle progressive-specific parameters (only constructor params, not runtime params)
-    aggregation_params = {}
-    if output_aggregation_method == "progressive":
-        aggregation_params.update({
-            "switch_mode": progressive_mode,
-            "length_thresholds": length_thresholds or [1000, 2000, 3000],
-            "special_tokens": special_tokens or [r"<\think>"]
-        })
-
-    # Note: max_rounds and score_threshold are runtime parameters, not constructor parameters
-
     # Create ensemble framework
     config = EnsembleConfig(
         model_selection_method=model_selection_method,
-        model_selection_params={"model_count": -1} if model_selection_method == "zscore" else {},
+        model_selection_params=model_selection_params or {},
         output_aggregation_method=output_aggregation_method,
-        output_aggregation_params=aggregation_params
+        output_aggregation_params=output_aggregation_params or {},
     )
 
     framework = EnsembleFramework(config)
@@ -325,12 +290,9 @@ def run_ensemble(
     results = framework.ensemble(
         examples=examples,
         model_specs=model_specs,
-        generator_pool=model_pool,
-        scorers=scorers,
         model_stats=model_stats,
         max_tokens=max_tokens,
         max_rounds=max_rounds,
-        score_threshold=score_threshold,
         is_chat=is_chat,
         **kwargs
     )
