@@ -7,7 +7,6 @@ then using a smaller model to generate the final response based on the outline.
 import logging
 from typing import List, Tuple, Optional, Union, Dict, Any
 import ray
-from copy import deepcopy
 
 from .base import BaseSentenceAggregator, ModelAttribution
 
@@ -112,206 +111,100 @@ class ProgressiveSelector(BaseSentenceAggregator):
         is_chat: bool = True,
         **kwargs
     ) -> List[str]:
-        """
-        Run progressive model selection for batch generation.
-        """
+        """Run progressive model selection for batch generation."""
         if not generators or not examples:
             return [""] * len(examples)
         
         # Select the two largest models
         large_model, small_model = self._select_two_largest_models(generators)
+        self.attribution = ModelAttribution()
         
-        results = []
+        # Extract questions and prepare conversations
+        questions = [self._extract_question(ex, is_chat) for ex in examples]
+        outline_convs = [self._prepare_conversation(ex, self.outline_prompt_template.format(question=q), is_chat) 
+                        for ex, q in zip(examples, questions)]
+        final_convs = []
         
-        # Process each example
-        for example in examples:
-            result = self._process_single_example(
-                large_model, small_model, example, max_tokens, is_chat, **kwargs
-            )
-            results.append(result)
+        # Stage 1: Batch generate outlines
+        logger.info(f"📝 Stage 1: Generating {len(examples)} outlines")
+        outlines = self._batch_generate(large_model, outline_convs, self.outline_max_tokens, is_chat, "outline", **kwargs)
+        
+        # Stage 2: Prepare and generate final answers
+        logger.info(f"🔧 Stage 2: Generating final answers")
+        for ex, outline in zip(examples, outlines):
+            if outline:
+                conv = self._prepare_conversation(ex, self.final_prompt_template.format(outline=outline), is_chat)
+                final_convs.append(conv)
+            else:
+                final_convs.append(None)
+        
+        final_answers = self._batch_generate(small_model, [c for c in final_convs if c], 
+                                           max(1000, max_tokens - self.outline_max_tokens), is_chat, "final", **kwargs)
+        
+        # Combine results
+        results, j = [], 0
+        for outline, conv in zip(outlines, final_convs):
+            if conv and j < len(final_answers):
+                results.append(f"{outline}\n\n{final_answers[j]}")
+                j += 1
+            else:
+                results.append(outline or "")
         
         return results
     
-    def _process_single_example(
-        self,
-        large_model,
-        small_model,
-        example: Union[str, List[Dict]],
-        max_tokens: int,
-        is_chat: bool,
-        **kwargs
-    ) -> str:
-        """Process a single example with two-stage generation."""
-        self.attribution = ModelAttribution()  # Reset attribution
-        
-        # Extract the question from the example
-        if is_chat:
-            # For chat format, get the last user message as the question
-            question = ""
-            if isinstance(example, list):
-                for msg in reversed(example):
-                    if isinstance(msg, dict) and msg.get("role") == "user":
-                        question = msg.get("content", "")
-                        break
-            if not question and example:
-                # Fallback: use the entire conversation
-                question = str(example)
-        else:
-            # For text format, use the entire input as the question
-            question = example if isinstance(example, str) else str(example)
-        
-        # Stage 1: Generate outline with large model
-        logger.info("📝 Stage 1: Generating outline with large model")
-        outline = self._generate_outline(large_model, example, question, is_chat, **kwargs)
-        
-        if not outline:
-            logger.warning("Failed to generate outline, returning empty result")
-            return ""
-        
-        # Stage 2: Generate final answer with small model
-        logger.info("🔧 Stage 2: Generating final answer with small model")
-        final_answer = self._generate_final_answer(
-            small_model, example, outline, is_chat, max_tokens, **kwargs
-        )
-        
-        return final_answer
+    def _extract_question(self, example: Union[str, List[Dict]], is_chat: bool) -> str:
+        """Extract question from example."""
+        if not is_chat:
+            return str(example)
+        if isinstance(example, list):
+            for msg in reversed(example):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    return msg.get("content", "")
+        return str(example)
     
-    def _generate_outline(
-        self,
-        large_model,
-        example: Union[str, List[Dict]],
-        question: str,
-        is_chat: bool,
-        **kwargs
-    ) -> str:
-        """Generate outline using the large model."""
-        # Prepare the outline prompt
-        outline_prompt = self.outline_prompt_template.format(question=question)
+    def _prepare_conversation(self, example: Union[str, List[Dict]], prompt: str, is_chat: bool) -> Union[str, List[Dict]]:
+        """Prepare conversation with prompt."""
+        if not is_chat:
+            return f"{example}\n\n{prompt}"
         
-        # Prepare the input for the large model
-        if is_chat:
-            # For chat format, append the outline prompt as a new user message
-            if isinstance(example, list):
-                outline_conversation = deepcopy(example)
-                # Remove any existing assistant messages to ensure clean context
-                outline_conversation = [msg for msg in outline_conversation if msg.get("role") != "assistant"]
-                # Add our outline prompt
-                outline_conversation.append({
-                    "role": "user",
-                    "content": outline_prompt
-                })
-            else:
-                outline_conversation = [{
-                    "role": "user",
-                    "content": outline_prompt
-                }]
-        else:
-            # For text format, append the outline prompt
-            outline_conversation = f"{example}\n\n{outline_prompt}"
+        if isinstance(example, list):
+            conv = [msg for msg in example if msg.get("role") != "assistant"]
+            conv.append({"role": "user", "content": prompt})
+            return conv
+        return [{"role": "user", "content": prompt}]
+    
+    def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, stage: str, **kwargs) -> List[str]:
+        """Batch generate with model."""
+        if not conversations:
+            return []
         
-        # Generate outline
         gen_kwargs = {
-            "max_tokens": self.outline_max_tokens,
+            "max_tokens": max_tokens,
             "temperature": kwargs.get("temperature", 0.7),
             "top_p": kwargs.get("top_p", 0.9),
             "is_chat": is_chat,
         }
         
-        # Add optional parameters
-        for key in ['seed', 'stop_strings', 'frequency_penalty', 'presence_penalty']:
+        for key in ['seed', 'stop_strings']:
             if key in kwargs:
                 gen_kwargs[key] = kwargs[key]
         
         try:
-            output = ray.get(large_model.generate.remote(outline_conversation, **gen_kwargs))
+            outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
+            model_name = ray.get(model.get_model_name.remote())
             
-            # Extract text from output
-            if hasattr(output, 'text'):
-                outline_text = output.text
-            else:
-                outline_text = str(output)
+            results = []
+            for output in outputs:
+                text = output.text if hasattr(output, 'text') else str(output)
+                results.append(text)
+                if text and hasattr(self, 'attribution'):
+                    self.attribution.add_segment(text, model_name, stage)
             
-            # Track attribution
-            model_name = ray.get(large_model.get_model_name.remote())
-            self.attribution.add_segment(outline_text, model_name, 1)
-            
-            logger.info(f"Generated outline ({len(outline_text)} chars)")
-            return outline_text
-            
+            logger.info(f"{stage}: Generated {len(results)} outputs")
+            return results
         except Exception as e:
-            logger.error(f"Error generating outline: {e}")
-            return ""
-    
-    def _generate_final_answer(
-        self,
-        small_model,
-        original_example: Union[str, List[Dict]],
-        outline: str,
-        is_chat: bool,
-        max_tokens: int,
-        **kwargs
-    ) -> str:
-        """Generate final answer using the small model based on the outline."""
-        # Prepare the input for the small model
-        final_prompt = self.final_prompt_template.format(outline=outline)
-        
-        if is_chat:
-            # For chat format, create a conversation with the outline context
-            if isinstance(original_example, list):
-                final_conversation = deepcopy(original_example)
-                # Remove any existing assistant messages
-                final_conversation = [msg for msg in final_conversation if msg.get("role") != "assistant"]
-                # Add the outline as context
-                final_conversation.append({
-                    "role": "user",
-                    "content": final_prompt
-                })
-            else:
-                final_conversation = [{
-                    "role": "user",
-                    "content": final_prompt
-                }]
-        else:
-            # For text format, combine original question with outline
-            final_conversation = f"{original_example}\n\n{final_prompt}"
-        
-        # Generate final answer
-        # The small model should generate the remaining tokens after outline
-        # But ensure it has enough space to generate a meaningful response
-        remaining_tokens = max(1000, max_tokens - self.outline_max_tokens)
-        gen_kwargs = {
-            "max_tokens": remaining_tokens,
-            "temperature": kwargs.get("temperature", 0.7),
-            "top_p": kwargs.get("top_p", 0.9),
-            "is_chat": is_chat,
-        }
-        
-        # Add optional parameters
-        for key in ['seed', 'stop_strings', 'frequency_penalty', 'presence_penalty']:
-            if key in kwargs:
-                gen_kwargs[key] = kwargs[key]
-        
-        try:
-            output = ray.get(small_model.generate.remote(final_conversation, **gen_kwargs))
-            
-            # Extract text from output
-            if hasattr(output, 'text'):
-                final_text = output.text
-            else:
-                final_text = str(output)
-            
-            # Track attribution
-            model_name = ray.get(small_model.get_model_name.remote())
-            self.attribution.add_segment(final_text, model_name, 2)
-            
-            logger.info(f"Generated final answer ({len(final_text)} chars)")
-            
-            # Combine outline and final answer
-            return outline + "\n\n" + final_text
-            
-        except Exception as e:
-            logger.error(f"Error generating final answer: {e}")
-            return outline  # Return at least the outline if final generation fails
+            logger.error(f"Error in {stage} generation: {e}")
+            return [""] * len(conversations)
     
     def __repr__(self):
         return f"ProgressiveSelector(outline_tokens={self.outline_max_tokens})"
