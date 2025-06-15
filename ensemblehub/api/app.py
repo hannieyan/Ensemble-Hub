@@ -11,18 +11,15 @@ Features:
 
 from typing import Union, Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import time
 import uuid
 import logging
 import json
-import yaml
-import os
 
 # Import ensemble framework
-from ensemblehub.ensemble_methods.ensemble import run_ensemble, get_default_model_stats
-from ensemblehub.generators import GeneratorPool
-from ensemblehub.scorers.base import ScorerPool
+from ensemblehub.ensemble_methods.ensemble import EnsembleFramework, EnsembleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,26 +28,8 @@ class Message(BaseModel):
     role: str
     content: str
 
-class EnsembleConfig(BaseModel):
-    """Ensemble configuration parameters"""
-    # Model selection
-    model_selection_method: str = Field(default="all", description="Model selection: zscore, all, random")
-    
-    # Output aggregation  
-    output_aggregation_method: str = Field(default="loop", description="Output aggregation method: progressive, random, loop, reward_based")
-    progressive_mode: Optional[str] = Field(default="length", description="Progressive mode: length, token")
-    length_thresholds: Optional[List[int]] = Field(default=None, description="Length thresholds for progressive mode")
-    special_tokens: Optional[List[str]] = Field(default=None, description="Special tokens for progressive mode")
-    
-    # Generation parameters
-    max_rounds: int = Field(default=500, description="Maximum generation rounds")
-    score_threshold: float = Field(default=-2.0, description="Score threshold for early stopping")
-    
-    # Output details
-    show_output_details: bool = Field(default=False, description="Show detailed output results in logs")
-    
-    # Thinking mode
-    enable_thinking: bool = Field(default=False, description="Enable thinking mode for models that support it")
+
+
 
 class ChatCompletionRequest(BaseModel):
     """Unified request model supporting both OpenAI completion formats"""
@@ -73,8 +52,6 @@ class ChatCompletionRequest(BaseModel):
     top_p: float = Field(default=1.0, description="Top-p sampling")
     n: int = Field(default=1, description="Number of completions")
     stop: Optional[Union[str, List[str]]] = Field(default=None, description="Stop sequences")
-    presence_penalty: float = Field(default=0.0, description="Presence penalty")
-    frequency_penalty: float = Field(default=0.0, description="Frequency penalty")
     logit_bias: Optional[Dict[int, float]] = Field(default=None, description="Token bias")
     user: Optional[str] = Field(default=None, description="User identifier")
     
@@ -85,8 +62,6 @@ class ChatCompletionRequest(BaseModel):
     # Additional parameters
     seed: Optional[int] = Field(default=None, description="Random seed")
     
-    # Custom ensemble configuration
-    ensemble_config: Optional[EnsembleConfig] = Field(default=None, description="Ensemble configuration")
     
     class Config:
         extra = "allow"  # Allow additional fields not defined here
@@ -106,136 +81,33 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
     usage: Dict[str, int]
 
-# API Application
-app = FastAPI(
-    title="Ensemble-Hub API",
-    description="Unified ensemble inference API with automatic batch detection",
-    version="3.0.0"
-)
 
-# Global configuration
-class APIConfig:
-    def __init__(self, config_file: Optional[str] = None):
-        """Initialize API configuration from YAML file or defaults"""
-        
-        if config_file and os.path.exists(config_file):
-            logger.info(f"Loading configuration from {config_file}")
-            with open(config_file, 'r') as f:
-                config = yaml.safe_load(f)
-            self._load_from_yaml(config)
-        else:
-            self._load_defaults()
-        
-        # Initialize pools
-        self.generator_pool = GeneratorPool()
-        self.scorer_pool = ScorerPool()
-        self.model_stats = get_default_model_stats()
-    
-    def _load_defaults(self):
-        """Load default configuration"""
-        # Debug settings
-        self.show_input_details = False
-        self.enable_thinking = False
-        
-        # Default model specifications
-        self.model_specs = [
-            {"path": "Qwen/Qwen2.5-1.5B-Instruct", "engine": "hf", "device": "mps"},
-            {"path": "Qwen/Qwen2.5-0.5B-Instruct", "engine": "hf", "device": "mps"},
-        ]
-        
-        # Default reward specifications
-        self.reward_spec = []
-        
-        # Default ensemble configuration
-        self.default_ensemble_config = EnsembleConfig(
-            output_aggregation_method="loop",
-            model_selection_method="all",
-            show_output_details=False
-        )
-        
-        # Engine options
-        self.engine_options = {
-            "vllm": {},
-            "hf": {}
-        }
-    
-    def _load_from_yaml(self, config: Dict[str, Any]):
-        """Load configuration from parsed YAML"""
-        
-        # Debug settings
-        debug_config = config.get("debug", {})
-        self.show_input_details = debug_config.get("show_input_details", False)
-        self.show_output_details = debug_config.get("show_output_details", False)
-        self.enable_thinking = debug_config.get("enable_thinking", False)
-        
-        # Model specifications
-        self.model_specs = config.get("model_specs", []) or []
-        
-        # Reward specifications
-        self.reward_spec = config.get("reward_specs", []) or []
-        
-        # Ensemble configuration
-        ensemble_config = config.get("ensemble", {})
-        
-        # Handle progressive settings
-        progressive_config = ensemble_config.get("progressive", {})
-        length_thresholds = progressive_config.get("length_thresholds", [1000, 2000, 3000])
-        special_tokens = progressive_config.get("special_tokens", [r"<\think>"])
-        
-        # Create ensemble config
-        self.default_ensemble_config = EnsembleConfig(
-            model_selection_method=ensemble_config.get("model_selection_method", "all"),
-            output_aggregation_method=ensemble_config.get("output_aggregation_method", "loop"),
-            progressive_mode=progressive_config.get("mode", "length"),
-            length_thresholds=length_thresholds,
-            special_tokens=special_tokens,
-            max_rounds=ensemble_config.get("max_rounds", 500),
-            score_threshold=ensemble_config.get("score_threshold", -2.0),
-            show_output_details=debug_config.get("show_output_details", False),
-            enable_thinking=self.enable_thinking
-        )
-        
-        # Engine options
-        self.engine_options = config.get("engine_options", {
-            "vllm": {},
-            "hf": {}
-        })
-        
-        # Apply global quantization settings to model specs if specified
-        hf_options = self.engine_options.get("hf", {})
-        if hf_options.get("use_8bit") or hf_options.get("use_4bit"):
-            quantization = "8bit" if hf_options.get("use_8bit") else "4bit"
-            for spec in self.model_specs:
-                if spec.get("engine") == "hf" and "quantization" not in spec:
-                    spec["quantization"] = quantization
-
-# Global API configuration
-api_config = APIConfig()
 
 
 def process_conversations(
     inputs: List,
-    ensemble_config: EnsembleConfig,
+    ensemble_framework: EnsembleFramework,
     request: ChatCompletionRequest,
     is_chat: bool = True
 ) -> List[Dict[str, Any]]:
     """Process conversations uniformly using ensemble"""
+    ensemble_config = ensemble_framework.config
     
     # Prepare model specs with format info
     model_specs_with_format = []
-    for spec in api_config.model_specs:
+    for spec in ensemble_config.model_specs:
         spec_copy = spec.copy()
-        spec_copy["enable_thinking"] = spec.get("enable_thinking", api_config.enable_thinking)
+        spec_copy["enable_thinking"] = spec.get("enable_thinking", ensemble_config.enable_thinking)
         model_specs_with_format.append(spec_copy)
     
     # Prepare common ensemble parameters
     base_params = {
         "model_specs": model_specs_with_format,
-        "reward_spec": api_config.reward_spec,
+        "reward_spec": ensemble_config.output_aggregation_params.get('reward_specs', []),
         "output_aggregation_method": ensemble_config.output_aggregation_method,
         "model_selection_method": ensemble_config.model_selection_method,
         "max_rounds": ensemble_config.max_rounds,
-        "score_threshold": ensemble_config.score_threshold,
+        "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
         "max_tokens": request.max_tokens,
         "temperature": request.temperature,
         "top_p": request.top_p,
@@ -246,22 +118,18 @@ def process_conversations(
     if request.seed is not None:
         base_params["seed"] = request.seed
     
+    # Merge stop strings from config and request
+    stop_strings = list(ensemble_config.stop_strings)  # Start with config defaults
     if request.stop is not None:
-        base_params["stop_strings"] = request.stop if isinstance(request.stop, list) else [request.stop]
+        request_stops = request.stop if isinstance(request.stop, list) else [request.stop]
+        # Add request stops, avoiding duplicates
+        for stop in request_stops:
+            if stop not in stop_strings:
+                stop_strings.append(stop)
     
-    if request.presence_penalty != 0:
-        base_params["presence_penalty"] = request.presence_penalty
-
-    if request.frequency_penalty != 0:
-        base_params["frequency_penalty"] = request.frequency_penalty
+    if stop_strings:
+        base_params["stop_strings"] = stop_strings
     
-    # Add progressive-specific parameters
-    if ensemble_config.output_aggregation_method == "progressive":
-        base_params.update({
-            "progressive_mode": ensemble_config.progressive_mode,
-            "length_thresholds": ensemble_config.length_thresholds or [1000, 2000, 3000],
-            "special_tokens": ensemble_config.special_tokens or [r"<\think>"]
-        })
     
     # Process all examples uniformly through ensemble framework
     base_params["is_chat"] = is_chat
@@ -269,7 +137,8 @@ def process_conversations(
     # Debug log
     logger.info(f"🔍 Debug: show_output_details = {ensemble_config.show_output_details}")
 
-    outputs = run_ensemble(examples=inputs, **base_params)
+    # Use the framework instance to run ensemble
+    outputs = ensemble_framework.ensemble(examples=inputs, **base_params)
     
     # Process results
     results = []
@@ -333,270 +202,172 @@ def create_result_dict(output: str, result: Dict, example: Union[str, List[Dict]
         "completion_tokens": len(output.split())
     }
 
-@app.get("/")
-def root():
-    """Root endpoint with API information"""
-    return {
-        "name": "Ensemble-Hub API",
-        "version": "2.0.0",
-        "description": "Unified ensemble inference with automatic batch detection",
-        "endpoint": "/v1/chat/completions",
-        "features": [
-            "Automatic single/batch detection",
-            "Model attribution tracking", 
-            "Progressive ensemble methods",
-            "OpenAI-compatible interface"
-        ]
-    }
+def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFramework) -> FastAPI:
+    """Create FastAPI app with injected dependencies"""
+    app = FastAPI(
+        title="Ensemble-Hub API",
+        description="Unified ensemble inference API with automatic batch detection",
+        version="3.0.0"
+    )
+    
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    @app.get("/")
+    def root():
+        """Root endpoint with API information"""
+        return {
+            "name": "Ensemble-Hub API",
+            "version": "3.0.0",
+            "description": "Unified ensemble inference with automatic batch detection",
+            "endpoint": "/v1/chat/completions",
+            "features": [
+                "Automatic single/batch detection",
+                "Model attribution tracking", 
+                "Progressive ensemble methods",
+                "OpenAI-compatible interface"
+            ],
+            "config": {
+                "method": f"{ensemble_config.model_selection_method}+{ensemble_config.output_aggregation_method}",
+                "models": len(ensemble_config.model_specs)
+            }
+        }
 
-@app.get("/status")
-def status():
-    """Health check endpoint"""
-    return {
-        "status": "ready",
-        "version": "2.0.0",
-        "available_methods": {
-            "model_selection": ["zscore", "all", "random"],
-            "output_aggregation_methods": ["progressive", "random", "loop", "reward_based"]
-        },
-        "model_count": len(api_config.model_specs),
-        "reward_count": len(api_config.reward_spec)
-    }
+    @app.get("/status")
+    def status():
+        """Health check endpoint"""
+        return {
+            "status": "ready",
+            "version": "3.0.0",
+            "available_methods": {
+                "model_selection": ["zscore", "all", "random", "model_judgment"],
+                "output_aggregation_methods": ["progressive", "random", "loop", "reward_based"]
+            },
+            "model_count": len(ensemble_config.model_specs),
+            "reward_count": len(ensemble_config.output_aggregation_params.get('reward_specs', []))
+        }
 
-async def _process_request(request: Request, req: ChatCompletionRequest, is_chat: bool, endpoint_name: str) -> ChatCompletionResponse:
-    """
-    Common request processing logic for both chat and text completions.
-    """
-    # Debug logging for raw request only (if enabled)
-    if api_config.show_input_details:
-        # Print raw request body
-        try:
+    async def _process_request(request: Request, req: ChatCompletionRequest, is_chat: bool, endpoint_name: str) -> ChatCompletionResponse:
+        """
+        Common request processing logic for both chat and text completions.
+        """
+        # Debug logging for raw request only (if enabled)
+        if ensemble_config.show_input_details:
+            # Print raw request body
             raw_body = await request.body()
             if raw_body:
                 logger.info("="*80)
                 logger.info(f"📨 Raw request at {endpoint_name}:")
-                try:
-                    # Try to parse and pretty print JSON
-                    raw_json = json.loads(raw_body.decode('utf-8'))
-                    logger.info(json.dumps(raw_json, indent=2, ensure_ascii=False))
-                except:
-                    # If not valid JSON, print as string
-                    logger.info(raw_body.decode('utf-8', errors='ignore'))
+                # Try to parse and pretty print JSON
+                raw_json = json.loads(raw_body.decode('utf-8'))
+                logger.info(json.dumps(raw_json, indent=2, ensure_ascii=False))
                 logger.info("="*80)
-        except Exception as e:
-            logger.info(f"Could not read raw body: {e}")
 
-    # Use provided config or default
-    ensemble_config = req.ensemble_config or api_config.default_ensemble_config
+        # Validate input based on endpoint type
+        if is_chat:
+            # Chat completions: expect messages field
+            assert req.messages is not None, "'messages' field is required for chat completions"
+            inputs = [req.messages,] if isinstance(req.messages[0], dict) else req.messages
+        else:
+            # Text completions: expect prompt field
+            assert req.prompt is not None, "'prompt' field is required for text completions"
+            inputs = [req.prompt,] if isinstance(req.prompt, str) else req.prompt
 
-    # Validate input based on endpoint type
-    if is_chat:
-        # Chat completions: expect messages field
-        assert req.messages is not None, "'messages' field is required for chat completions"
-        inputs = [req.messages,] if isinstance(req.messages[0], dict) else req.messages
-    else:
-        # Text completions: expect prompt field
-        assert req.prompt is not None, "'prompt' field is required for text completions"
-        inputs = [req.prompt,] if isinstance(req.prompt, str) else req.prompt
-
-    # Process all conversations
-    results = process_conversations(
-        inputs,
-        ensemble_config,
-        req,
-        is_chat=is_chat
-    )
-
-    # Build response
-    choices = []
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-
-    for i, result in enumerate(results):
-        # Support both chat completion and text completion formats
-        choice = ChatCompletionChoice(
-            index=i,
-            finish_reason=result["finish_reason"],
-            metadata=result.get("metadata")
+        # Process all conversations
+        results = process_conversations(
+            inputs,
+            ensemble_framework,
+            req,
+            is_chat=is_chat
         )
 
-        if is_chat:
-            # Standard chat completion format
-            choice.message = Message(role="assistant", content=result["content"])
-            choice.text = None
-        else:
-            # Text completion format (lm-evaluation-harness compatibility)
-            choice.text = result["content"]
-            choice.message = None
+        # Build response
+        choices = []
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
-        choices.append(choice)
-        total_prompt_tokens += result["prompt_tokens"]
-        total_completion_tokens += result["completion_tokens"]
+        for i, result in enumerate(results):
+            # Support both chat completion and text completion formats
+            choice = ChatCompletionChoice(
+                index=i,
+                finish_reason=result["finish_reason"],
+                metadata=result.get("metadata")
+            )
 
-    # Determine response object type (OpenAI standard)
-    object_type = "chat.completion" if is_chat else "text.completion"
+            if is_chat:
+                # Standard chat completion format
+                choice.message = Message(role="assistant", content=result["content"])
+                choice.text = None
+            else:
+                # Text completion format (lm-evaluation-harness compatibility)
+                choice.text = result["content"]
+                choice.message = None
 
-    return ChatCompletionResponse(
-        id=f"chatcmpl-{uuid.uuid4()}",
-        object=object_type,
-        created=int(time.time()),
-        model=req.model,
-        choices=choices,
-        usage={
-            "prompt_tokens": total_prompt_tokens,
-            "completion_tokens": total_completion_tokens,
-            "total_tokens": total_prompt_tokens + total_completion_tokens
-        }
-    )
+            choices.append(choice)
+            total_prompt_tokens += result["prompt_tokens"]
+            total_completion_tokens += result["completion_tokens"]
 
-@app.post("/v1/chat/completions")
-async def chat_completions(request: Request, req: ChatCompletionRequest) -> ChatCompletionResponse:
-    """
-    Chat completion endpoint for conversational AI.
-    
-    Automatically detects:
-    - Single request: messages is List[Message] 
-    - Batch request: messages is List[List[Message]]
-    
-    Returns OpenAI-compatible response format.
-    """
-    return await _process_request(request, req, is_chat=True, endpoint_name="/v1/chat/completions")
+        # Determine response object type (OpenAI standard)
+        object_type = "chat.completion" if is_chat else "text.completion"
 
-@app.post("/v1/completions")
-async def completions(request: Request, req: ChatCompletionRequest):
-    """
-    Text completion endpoint for prompt completion.
-    Compatible with OpenAI Completions API.
-    """
-    return await _process_request(request, req, is_chat=False, endpoint_name="/v1/completions")
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4()}",
+            object=object_type,
+            created=int(time.time()),
+            model=req.model,
+            choices=choices,
+            usage={
+                "prompt_tokens": total_prompt_tokens,
+                "completion_tokens": total_completion_tokens,
+                "total_tokens": total_prompt_tokens + total_completion_tokens
+            }
+        )
 
-@app.post("/v1/ensemble/config")
-def update_config(
-    model_specs: Optional[List[Dict[str, Any]]] = None,
-    reward_spec: Optional[List[Dict[str, Any]]] = None,
-    default_ensemble_config: Optional[EnsembleConfig] = None
-):
-    """Update API configuration"""
-    if model_specs is not None:
-        api_config.model_specs = model_specs
-        logger.info(f"Updated model_specs: {len(model_specs)} models")
-    
-    if reward_spec is not None:
-        api_config.reward_spec = reward_spec
-        logger.info(f"Updated reward_spec: {len(reward_spec)} scorers")
-    
-    if default_ensemble_config is not None:
-        api_config.default_ensemble_config = default_ensemble_config
-        logger.info("Updated default ensemble config")
-    
-    return {
-        "status": "updated",
-        "model_count": len(api_config.model_specs),
-        "reward_count": len(api_config.reward_spec)
-    }
-
-@app.get("/v1/ensemble/config")
-def get_config():
-    """Get current API configuration"""
-    return {
-        "model_specs": api_config.model_specs,
-        "reward_spec": api_config.reward_spec,
-        "default_ensemble_config": api_config.default_ensemble_config.model_dump()
-    }
-
-
-def create_app_from_yaml(config_file: str) -> FastAPI:
-    """Create FastAPI app from YAML configuration file"""
-    global api_config
-    
-    # Reinitialize api_config with YAML file
-    api_config = APIConfig(config_file=config_file)
-    
-    logger.info(f"API initialized from {config_file}")
-    logger.info(f"  Model selection: {api_config.default_ensemble_config.model_selection_method}")
-    logger.info(f"  Output aggregation method: {api_config.default_ensemble_config.output_aggregation_method}")
-    logger.info(f"  Max rounds: {api_config.default_ensemble_config.max_rounds}")
-    logger.info(f"  Show output details: {api_config.default_ensemble_config.show_output_details}")
-    logger.info(f"  Show input details: {api_config.show_input_details}")
-    logger.info(f"  Enable thinking: {api_config.enable_thinking}")
-    logger.info(f"  Models: {api_config.model_specs}")
-    logger.info(f"  Rewards: {api_config.reward_spec}")
-    
-    return app
-
-
-def create_app_with_config(
-    model_selection_method: str = "all",
-    output_aggregation_method: str = "loop",
-    progressive_mode: str = "length",
-    length_thresholds: str = "1000,2000,3000",
-    special_tokens: str = r"<\think>",
-    max_rounds: int = 500,
-    score_threshold: float = -2.0,
-    show_output_details: bool = False,
-    show_input_details: bool = False,
-    enable_thinking: bool = False,
-    model_specs: str = None,
-    hf_use_8bit: bool = False,
-    hf_use_4bit: bool = False,
-    config_file: str = None
-) -> FastAPI:
-    """Create FastAPI app with custom ensemble configuration
-    
-    If config_file is provided, it will override all other parameters.
-    """
-    
-    # If YAML config file is provided, use it instead
-    if config_file:
-        return create_app_from_yaml(config_file)
-    
-    # Otherwise use command line parameters
-    # Parse parameters
-    length_threshold_list = [int(x.strip()) for x in length_thresholds.split(",")] if length_thresholds else [1000, 2000, 3000]
-    special_token_list = [x.strip() for x in special_tokens.split(",")] if special_tokens else [r"<\think>"]
-    
-    # Update global config
-    api_config.default_ensemble_config = EnsembleConfig(
-        model_selection_method=model_selection_method,
-        output_aggregation_method=output_aggregation_method,
-        progressive_mode=progressive_mode,
-        length_thresholds=length_threshold_list,
-        special_tokens=special_token_list,
-        max_rounds=max_rounds,
-        score_threshold=score_threshold,
-        show_output_details=show_output_details,
-        enable_thinking=enable_thinking
-    )
-    
-    # Update model specs if provided
-    if model_specs:
-        # Parse model specs as JSON format
-        # Expected format: '[{"path": "model1", "engine": "hf", "device": "cuda:0"}, ...]'
-        models = json.loads(model_specs)
-        logger.info(f"Parsed model_specs as JSON: {len(models)} models")
+    @app.post("/v1/chat/completions")
+    async def chat_completions(request: Request, req: ChatCompletionRequest) -> ChatCompletionResponse:
+        """
+        Chat completion endpoint for conversational AI.
         
-        if models:
-            api_config.model_specs = models
-    
-    # Apply quantization settings to HF models
-    if hf_use_8bit or hf_use_4bit:
-        quantization = "8bit" if hf_use_8bit else "4bit"
-        for spec in api_config.model_specs:
-            if spec.get("engine") == "hf":
-                spec["quantization"] = quantization
-                logger.info(f"Applying {quantization} quantization to {spec['path']}")
-    
-    # Set debug flag
-    api_config.show_input_details = show_input_details
-    api_config.enable_thinking = enable_thinking
-    
-    logger.info(f"API initialized with:")
-    logger.info(f"  Model selection: {model_selection_method}")
-    logger.info(f"  Output aggregation method: {output_aggregation_method}")
-    logger.info(f"  Max rounds: {max_rounds}")
-    logger.info(f"  Show output details: {show_output_details}")
-    logger.info(f"  Show input details: {show_input_details}")
-    logger.info(f"  Enable thinking: {enable_thinking}")
-    logger.info(f"  Models: {len(api_config.model_specs)}")
+        Automatically detects:
+        - Single request: messages is List[Message] 
+        - Batch request: messages is List[List[Message]]
+        
+        Returns OpenAI-compatible response format.
+        """
+        return await _process_request(request, req, is_chat=True, endpoint_name="/v1/chat/completions")
+
+    @app.post("/v1/completions")
+    async def completions(request: Request, req: ChatCompletionRequest):
+        """
+        Text completion endpoint for prompt completion.
+        Compatible with OpenAI Completions API.
+        """
+        return await _process_request(request, req, is_chat=False, endpoint_name="/v1/completions")
+
+    @app.get("/v1/ensemble/config")
+    def get_config():
+        """Get current ensemble configuration"""
+        return {
+            "model_specs": ensemble_config.model_specs,
+            "reward_specs": ensemble_config.output_aggregation_params.get('reward_specs', []),
+            "ensemble_config": {
+                "model_selection_method": ensemble_config.model_selection_method,
+                "model_selection_params": ensemble_config.model_selection_params,
+                "output_aggregation_method": ensemble_config.output_aggregation_method,
+                "output_aggregation_params": ensemble_config.output_aggregation_params,
+                "max_rounds": ensemble_config.max_rounds,
+                "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
+                "show_output_details": ensemble_config.show_output_details,
+                "enable_thinking": ensemble_config.enable_thinking
+            }
+        }
+
     
     return app
+

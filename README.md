@@ -12,7 +12,7 @@ The project is under active development.
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | **Boost answer quality** by letting several LLMs compete. | Each round, every generator writes a short segment → a reward model (Qwen 2.5-Math-PRM-7B) scores them → best segment is kept. |
 | **Stay fast & memory-friendly** with model caching.       | ModelPool loads each generator/reward model once, then re-uses it for every call (CLI, notebook or API).                       |
-| **Provide plug-and-play usage** for research & services.  | Python helper `run_ensemble()` **or** a production-grade FastAPI server (`ensemble_api_server.py`).                            |
+| **Provide plug-and-play usage** for research & services.  | Python `EnsembleFramework` class **or** a production-grade FastAPI server (`ensemblehub/api.py`).                            |
 
 
 ## 💡 Core features
@@ -133,111 +133,30 @@ python -m ensemblehub.inference \
 
 ### 🚀 Start the FastAPI
 
-#### Option 1: YAML Configuration (Recommended)
-
-Create a YAML configuration file and use it to start the server:
+#### Using YAML Configuration (Recommended)
 
 ```bash
-# Using the provided example configuration
-python -m ensemblehub.api --config examples/all_loop.yaml
+# Start with example configuration
+python ensemblehub/api.py examples/all_loop.yaml
 
-# Using custom configuration
-python -m ensemblehub.api --config my_config.yaml
+# Or use progressive ensemble
+python ensemblehub/api.py examples/all_progressive.yaml
 ```
 
-**Example YAML Configuration (`my_config.yaml`):**
-```yaml
-# Server Configuration
-server:
-  host: "0.0.0.0"
-  port: 8000
-
-# Debug Settings
-debug:
-  show_input_details: false
-  show_output_details: true
-  enable_thinking: false
-
-# Model Specifications
-model_specs:
-  - path: "Qwen/Qwen2.5-1.5B-Instruct"
-    engine: "hf"
-    quantization: "4bit"
-    max_memory: {"0": "8GB", "cpu": "16GB"}
-  
-  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-    engine: "hf"
-    enable_thinking: true
-
-# Reward Model Specifications (optional)
-reward_specs:
-  - path: "Qwen/Qwen2.5-Math-PRM-7B"
-    engine: "hf_rm"
-    device: "cuda:0"
-    weight: 1.0
-
-# Ensemble Configuration
-ensemble:
-  model_selection_method: "all"  # Options: all, zscore, model_judgment, random
-  output_aggregation_method: "loop"  # Options: loop, progressive, random, reward_based
-  
-  # Progressive settings (for progressive method)
-  progressive:
-    mode: "length"  # Options: length, token
-    length_thresholds: [1000, 2000, 3000]
-    special_tokens: ["<\\think>"]
-  
-  max_rounds: 500
-  score_threshold: -2.0
-  
-  # Default generation parameters
-  generation:
-    max_tokens: null  # Auto-detect
-    temperature: 1.0
-    top_p: 1.0
-
-# Engine-specific Options
-engine_options:
-  vllm:
-    enforce_eager: false
-    max_model_len: 32768
-    gpu_memory_utilization: 0.8
-  
-  hf:
-    use_eager_attention: true
-    low_cpu_mem: true
-```
-
-#### Option 2: Command Line Arguments
+#### Using Default Configuration
 
 ```bash
-# Quick start with simple configuration
-python -m ensemblehub.api \
-   --model_specs '[
-     {"path":"Qwen/Qwen2.5-0.5B-Instruct","engine":"hf","device":"cuda:0"},
-     {"path":"Qwen/Qwen2.5-1.5B-Instruct","engine":"hf","device":"cuda:1","quantization":"4bit"}
-   ]' \
-   --show_output_details \
-   --output_aggregation_method random
-
-# Advanced ensemble configurations
-python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --max_rounds 5
-
-# Progressive ensemble with length-based switching
-python -m ensemblehub.api --output_aggregation_method progressive --progressive_mode length \
-  --length_thresholds 50,100,200 --max_rounds 3
-
-# Statistical model selection with reward-based aggregation
-python -m ensemblehub.api --model_selection_method zscore --output_aggregation_method reward_based \
-  --score_threshold -1.5 --max_rounds 10
-
-# Enable thinking mode for reasoning models (e.g., DeepSeek-R1)
-python -m ensemblehub.api --model_selection_method all --output_aggregation_method loop --enable_thinking
+# Start with default settings
+python ensemblehub/api.py
 ```
 
 #### Evaluate with lm-evaluation-harness
 
 ```bash
+# Start API server
+python ensemblehub/api.py examples/all_loop.yaml
+
+# Run evaluation in another terminal
 export OPENAI_API_KEY=dummy_key
 lm_eval --model openai-completions \
    --tasks arc_challenge_chat \
@@ -246,42 +165,24 @@ lm_eval --model openai-completions \
    --num_fewshot 5
 ```
 
-> **Note**: YAML configuration takes precedence over command line arguments. When using `--config`, other command line options are ignored.
+> **Note**: Server configuration is controlled via environment variables API_HOST and API_PORT.
 
 #### Testing the API
 
-1. **Health Check**
+```bash
+# Health check
+curl http://localhost:8000/status
 
-   ```bash
-   curl http://localhost:8000/status
-   # ➜ {"status":"ready", "available_methods": [...]}
-   ```
+# Chat completion
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ensemble", "messages": [{"role": "user", "content": "Hello"}]}'
 
-2. **Chat Completion (New OpenAI Format)**
-
-   ```bash
-   curl -X POST http://localhost:8000/v1/chat/completions \
-       -H "Content-Type: application/json" \
-       -d '{
-           "model": "ensemble",
-           "messages": [
-               {"role": "user", "content": "What is the capital of France?"}
-           ],
-           "max_tokens": 50
-       }'
-   ```
-
-3. **Text Completion (Legacy OpenAI Format)**
-
-   ```bash
-   curl -X POST http://localhost:8000/v1/completions \
-       -H "Content-Type: application/json" \
-       -d '{
-           "model": "ensemble",
-           "prompt": "What is the capital of France?",
-           "max_tokens": 50
-       }'
-   ```
+# Text completion  
+curl -X POST http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ensemble", "prompt": "Hello", "max_tokens": 50}'
+```
 
 ## 📌 To-Do
 

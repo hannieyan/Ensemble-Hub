@@ -2,70 +2,37 @@
 
 ## 📖 Overview
 
-Ensemble-Hub API provides an OpenAI-compatible interface for ensemble model inference. It supports multiple model selection strategies, various output aggregation methods, and flexible configuration options. The API can automatically detect single and batch requests, making it compatible with tools like lm-evaluation-harness.
+Ensemble-Hub API provides an OpenAI-compatible interface for ensemble model inference. Configure via YAML files, start with a single command, and use standard OpenAI endpoints.
 
-### Key Concepts
+### Key Features
 
-- **Model Selection**: Choose which models to use based on statistical methods (e.g., z-score), use all models, or random selection
-- **Output Aggregation**: Combine outputs from multiple models at different levels (sentence, token, or response)
-- **Ensemble Methods**: Pre-configured combinations of model selection and aggregation strategies
-- **Progressive Ensemble**: Dynamically switch between models based on length or special tokens
-- **Batch Processing**: Process multiple requests efficiently in a single API call
+- **YAML Configuration**: All settings defined in configuration files
+- **OpenAI Compatible**: Standard `/v1/chat/completions` and `/v1/completions` endpoints
+- **Automatic Batch Detection**: Single and batch requests handled seamlessly
+- **Multiple Ensemble Methods**: Loop, progressive, reward-based, and more
 
 ## 🛠️ Complete API Parameters
 
 ### Starting the API Server
 
 ```bash
-# Basic startup
-python -m ensemblehub.api
+# Start with YAML configuration (recommended)
+python ensemblehub/api.py examples/all_loop.yaml
 
-# With uvicorn (limited configuration)
-uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
+# Start with default configuration
+python ensemblehub/api.py
+
+# Set server host/port via environment variables
+API_HOST=0.0.0.0 API_PORT=8080 python ensemblehub/api.py examples/all_loop.yaml
 ```
 
-**Note**: Full configuration is only available with `python -m ensemblehub.api`.
-
-### Command Line Arguments
+### Configuration
 
 **Server Configuration**
-- `--host`: Server host address (default: 127.0.0.1)
-- `--port`: Server port (default: 8000)
+- `API_HOST`: Server host address (default: 0.0.0.0)
+- `API_PORT`: Server port (default: 8000)
 
-**Ensemble Configuration**
-- `--model_selection_method`: Model selection strategy [`zscore`, `all`, `random`] (default: zscore)
-- `--ensemble_method`: Ensemble method [`simple`, `progressive`, `random`, `loop`] (default: simple)
-- `--max_rounds`: Maximum inference rounds (default: 500)
-- `--score_threshold`: Score threshold for early stopping (default: -2.0)
-- `--max_repeat`: Maximum repeat count (default: 3)
-
-**Progressive Ensemble Configuration**
-- `--progressive_mode`: Mode [`length`, `token`, `mixed`] (default: mixed)
-- `--length_thresholds`: Comma-separated thresholds (e.g., 50,100,200)
-- `--special_tokens`: Comma-separated tokens (e.g., <step>,<think>)
-
-**Model Configuration**
-- `--model_specs`: Model specifications in JSON format
-
-**Debug and Output**
-- `--show_attribution`: Show which model generated which part
-- `--show_input_details`: Show detailed input parameters
-- `--enable_thinking`: Enable thinking mode for compatible models
-- `--disable_internal_template`: Disable internal template formatting
-
-**vLLM Engine Options**
-- `--vllm_enforce_eager`: Disable CUDA graphs (fixes memory errors)
-- `--vllm_disable_chunked_prefill`: Disable chunked prefill
-- `--vllm_max_model_len`: Maximum model length (default: 32768)
-- `--vllm_gpu_memory_utilization`: GPU memory utilization (default: 0.8)
-- `--vllm_disable_sliding_window`: Disable sliding window attention
-
-**HuggingFace Engine Options**
-- `--hf_use_eager_attention`: Use eager attention (default: True)
-- `--hf_disable_device_map`: Disable device_map
-- `--hf_use_8bit`: Use 8-bit quantization
-- `--hf_use_4bit`: Use 4-bit quantization
-- `--hf_low_cpu_mem`: Use low CPU memory loading (default: True)
+All other configuration is done via YAML files. See `examples/` directory for examples.
 
 ### API Request Parameters
 
@@ -112,86 +79,20 @@ uvicorn ensemblehub.api:app --host 0.0.0.0 --port 8000
 - `POST /v1/ensemble/presets/selection_only` - Model selection only
 - `POST /v1/ensemble/presets/aggregation_only` - Output aggregation only
 
-## 💻 Common Command Line Examples
+## 💻 Common Usage Examples
 
 ### Basic Usage
 
 ```bash
 # Start with default configuration
-python -m ensemblehub.api
+python ensemblehub/api.py
+
+# Start with example configurations
+python ensemblehub/api.py examples/all_loop.yaml
+python ensemblehub/api.py examples/all_progressive.yaml
 
 # Configure server address and port
-python -m ensemblehub.api --host 0.0.0.0 --port 8080
-
-# Show model attribution
-python -m ensemblehub.api --show_attribution
-
-# Enable thinking mode
-python -m ensemblehub.api --enable_thinking
-```
-
-### Model Selection and Ensemble Methods
-
-```bash
-# Z-score based model selection with simple ensemble
-python -m ensemblehub.api --model_selection_method zscore --ensemble_method simple
-
-# Use all models with loop (round-robin) ensemble
-python -m ensemblehub.api --model_selection_method all --ensemble_method loop
-
-# Random model selection
-python -m ensemblehub.api --model_selection_method all --ensemble_method random --max_rounds 3
-```
-
-### Progressive Ensemble
-
-```bash
-# Length-based progressive ensemble
-python -m ensemblehub.api --ensemble_method progressive --progressive_mode length \
-  --length_thresholds 50,100,200 --max_rounds 3
-
-# Token-based progressive ensemble
-python -m ensemblehub.api --ensemble_method progressive --progressive_mode token \
-  --special_tokens "<step>,<think>" --show_attribution
-
-# Mixed mode progressive ensemble
-python -m ensemblehub.api --ensemble_method progressive --progressive_mode mixed \
-  --length_thresholds 100,200 --special_tokens "<step>,<think>"
-```
-
-### Memory Optimization
-
-```bash
-# vLLM with memory optimization
-python -m ensemblehub.api --vllm_enforce_eager --vllm_disable_chunked_prefill \
-  --vllm_max_model_len 16384 --vllm_gpu_memory_utilization 0.9
-
-# HuggingFace with 8-bit quantization
-python -m ensemblehub.api --hf_use_8bit --hf_use_eager_attention
-
-# HuggingFace with 4-bit quantization
-python -m ensemblehub.api --hf_use_4bit --hf_disable_device_map
-```
-
-### Custom Model Configuration
-
-```bash
-# Configure custom models
-python -m ensemblehub.api --model_specs '[{"path":"model1","engine":"hf"},{"path":"model2","engine":"hf"}]'
-
-# Complete configuration example
-python -m ensemblehub.api \
-  --host 0.0.0.0 --port 8080 \
-  --model_selection_method zscore \
-  --ensemble_method progressive \
-  --progressive_mode mixed \
-  --length_thresholds 100,200 \
-  --special_tokens "<step>,<think>" \
-  --max_rounds 5 \
-  --score_threshold -2.0 \
-  --max_repeat 3 \
-  --show_attribution \
-  --show_input_details
+API_HOST=0.0.0.0 API_PORT=8080 python ensemblehub/api.py examples/all_loop.yaml
 ```
 
 ### API Request Examples
@@ -291,24 +192,11 @@ curl -X POST "http://localhost:8000/v1/completions" \
 ### Using with lm-evaluation-harness
 
 ```bash
-# Export dummy API key (required by lm-eval)
+# Start API server
+python ensemblehub/api.py examples/all_loop.yaml
+
+# Run evaluation in another terminal
 export OPENAI_API_KEY=dummy
-
-# Basic test
-lm_eval --model local-completions \
-  --tasks gsm8k \
-  --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
-  --batch_size 2 \
-  --num_fewshot 5
-
-# Full evaluation with specific ensemble configuration
-python -m ensemblehub.api \
-  --model_selection_method all \
-  --ensemble_method loop \
-  --enable_thinking \
-  --show_attribution
-
-# In another terminal
 lm_eval --model openai-completions \
   --tasks arc_challenge_chat \
   --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
@@ -452,7 +340,7 @@ result = client.chat_completion(
 
 **Cannot access API**: Check firewall and port availability with `curl http://localhost:8000/status`
 
-**Ensemble configuration not working**: Use `python -m ensemblehub.api` instead of `uvicorn`
+**Configuration not loading**: Check YAML file path and syntax
 
 ## 📖 Additional Resources
 

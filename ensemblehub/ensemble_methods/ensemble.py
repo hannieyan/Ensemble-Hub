@@ -17,6 +17,8 @@ from typing import List, Dict, Any, Optional
 
 import ray
 import torch
+from pydantic import BaseModel, Field
+
 from .model_selection.learned import MetaLearningSelector
 # Model Selection imports
 from .model_selection.statistical import ZScoreSelector, AllModelsSelector, JudgmentSelector
@@ -31,23 +33,27 @@ from ..generators.hf_engine import get_remote_hf_generator_class
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class EnsembleConfig:
-    """Configuration for ensemble methods."""
+
+class EnsembleConfig(BaseModel):
+    """Core ensemble configuration parameters"""
     
-    # Model Selection Configuration
-    model_selection_method: str = "all"  # zscore, all, random, llm_blender, meta_learning
-    model_selection_params: Dict[str, Any] = None
+    # Core ensemble method configuration
+    model_selection_method: str = Field(default="all", description="Model selection: zscore, all, model_judgment")
+    model_selection_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for model selection method")
+    output_aggregation_method: str = Field(default="loop", description="Output aggregation method: reward_based, random, loop, progressive, etc.")
+    output_aggregation_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for output aggregation method (includes reward_specs, score_threshold, etc.)")
     
-    # Output Aggregation Configuration
-    output_aggregation_method: str = "first"  # first, reward_based, random, loop, gac, distribution
-    output_aggregation_params: Dict[str, Any] = None
+    # Global generation parameters
+    max_rounds: int = Field(default=500, description="Maximum generation rounds")
+    stop_strings: List[str] = Field(default_factory=list, description="Default stop strings for generation")
     
-    def __post_init__(self):
-        if self.model_selection_params is None:
-            self.model_selection_params = {}
-        if self.output_aggregation_params is None:
-            self.output_aggregation_params = {}
+    # Debug options
+    show_output_details: bool = Field(default=False, description="Show detailed output in logs")
+    show_input_details: bool = Field(default=False, description="Show raw request in logs")
+    enable_thinking: bool = Field(default=False, description="Enable thinking mode for supported models")
+    
+    # Server configuration (not part of ensemble logic, but needed somewhere)
+    model_specs: List[Dict[str, Any]] = Field(default_factory=list, description="Model specifications")
 
 
 class EnsembleFramework:
@@ -66,7 +72,7 @@ class EnsembleFramework:
     # Unified registry with metadata
     OUTPUT_AGGREGATORS = {
         # Sentence-level aggregators
-        "reward_based": (RewardBasedSelector, "sentence", ["exclude_self_scoring", "max_repeat", "name"]),
+        "reward_based": (RewardBasedSelector, "sentence", ["exclude_self_scoring", "max_repeat", "name", "reward_specs", "score_threshold"]),
         "random": (RandomSentenceSelector, "sentence", ["max_repeat", "name"]),
         "loop": (LoopSelector, "sentence", ["max_repeat", "name"]),
         "progressive": (ProgressiveSelector, "sentence", ["outline_max_tokens", "outline_prompt_template", "final_prompt_template", "template_language", "name"]),
@@ -151,7 +157,9 @@ class EnsembleFramework:
                 logger.info(f"✅ Reusing existing actor: {spec['path']}")
             except ValueError:
                 # Actor doesn't exist, create new one
-                actor = get_remote_hf_generator_class(spec.get("num_gpus", 0.5 if torch.cuda.is_available() else 0))      # if only one GPU, set num_gpus to 0.5
+                # Default GPU allocation: 0.5 for shared GPU usage, 0 for CPU-only
+                default_gpus = 0.5 if torch.cuda.is_available() else 0
+                actor = get_remote_hf_generator_class(spec.get("num_gpus", default_gpus))
                 generator = actor.options(name=spec["path"], lifetime="detached").remote(
                     model_path=spec["path"],
                     max_memory=spec.get("max_memory", None),
@@ -225,79 +233,6 @@ class EnsembleFramework:
         return results
 
 
-def run_ensemble(
-    examples: List,
-    model_specs: List[Dict] = None,
-    model_selection_method: str = "zscore",
-    model_selection_params: Dict[str, Any] = None,
-    output_aggregation_method: str = "loop",
-    output_aggregation_params: Dict[str, Any] = None,
-    max_tokens: int = None,
-    max_rounds: int = 500,
-    is_chat: bool = False,
-    **kwargs
-) -> List:
-    """
-    Run ensemble inference using the unified framework.
-    
-    Args:
-        examples: List of input examples, each with "instruction", "input", "output"
-        model_specs: List of model specifications with format:
-            [{"path": "model/path", "engine": "hf", "device": "cuda:0", ...}, ...]
-        model_selection_method: Model selection strategy:
-            - "all": Use all models
-            - "zscore": Statistical z-score based selection
-            - "random": Random model selection
-            - "llm_blender": LLM-Blender based selection
-        model_selection_params: Parameters for model selection method
-        output_aggregation_method: Aggregation method for outputs:
-            - "reward_based": Select based on reward scores
-            - "random": Random selection
-            - "loop": Loop selection
-            - "progressive": Progressive selection based on length/tokens
-            - "gac": Token-level GAC aggregation
-            - "distribution": Token-level distribution aggregation
-        output_aggregation_params: Parameters for output aggregation method
-        max_tokens: Maximum tokens to generate
-        max_rounds: Maximum rounds for iterative methods
-        is_chat: Whether examples are in chat format
-        **kwargs: Additional generation parameters
-        
-    Returns:
-        List[Dict]: Results for each example with keys:
-            - "output": Generated text
-            - "selected_models": List of selected model paths
-            - "method": Method name used
-            - "config": Configuration details
-            - "attribution": Model attribution data (if available)
-    """
-
-
-    # Load model statistics
-    model_stats = get_default_model_stats()
-
-    # Create ensemble framework
-    config = EnsembleConfig(
-        model_selection_method=model_selection_method,
-        model_selection_params=model_selection_params or {},
-        output_aggregation_method=output_aggregation_method,
-        output_aggregation_params=output_aggregation_params or {},
-    )
-
-    framework = EnsembleFramework(config)
-
-    # Run ensemble
-    results = framework.ensemble(
-        examples=examples,
-        model_specs=model_specs,
-        model_stats=model_stats,
-        max_tokens=max_tokens,
-        max_rounds=max_rounds,
-        is_chat=is_chat,
-        **kwargs
-    )
-
-    return results
 
 
 

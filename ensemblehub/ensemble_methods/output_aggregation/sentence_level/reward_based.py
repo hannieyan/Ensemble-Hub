@@ -301,7 +301,7 @@ class RewardBasedSelector(BaseSentenceAggregator):
         }
         
         # Add optional parameters
-        for key in ['seed', 'stop_strings', 'frequency_penalty', 'presence_penalty']:
+        for key in ['seed', 'stop_strings']:
             if key in kwargs:
                 gen_kwargs[key] = kwargs[key]
         

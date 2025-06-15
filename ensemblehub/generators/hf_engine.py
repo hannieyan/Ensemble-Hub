@@ -6,7 +6,6 @@ from __future__ import annotations
 import inspect
 import logging
 import math
-import threading
 from typing import List, Optional, Union
 
 import ray
@@ -89,7 +88,6 @@ class HFGenerator:
 
         self.name = model_path
         self.enable_thinking = enable_thinking
-        self._lock = threading.Lock()  # Thread safety for concurrent access
 
         # Optional stop string list
         self.stop_strings = [
@@ -110,84 +108,85 @@ class HFGenerator:
         temperature=0.95,
         top_p=0.7,
         top_k=50,
-        repetition_penalty=1.0,
+        repetition_penalty=1.1,
         stop_strings: Optional[Union[str, List[str]]] = None,
         seed: Optional[int] = None,
     ) -> Union[GenOutput, List[GenOutput]]:
 
-        # Use lock to prevent concurrent access issues
-        with self._lock:
-            # stop_strings
-            stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
+        # stop_strings
+        stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
 
-            # Auto-detect format: if input has "prompt" field, it's text completion
-            if not is_chat:
-                # Text completion mode - use raw prompt without template
-                # logger.info(f"  Raw prompt: {inputs[0]}")
-                ids = self.tokenizer(
-                    inputs,
-                    return_tensors="pt",
-                    padding=True,
-                    padding_side='left',
-                ).to(self.device)
-            else:
-                # Chat completion mode - use apply_chat_template
-                # logger.info(f"  Messages: {inputs[0]}")
-                # Check if tokenizer supports enable_thinking
-                ids = self.tokenizer.apply_chat_template(
-                    inputs,
-                    add_generation_prompt=True,
-                    padding=True,
-                    padding_side='left',
-                    enable_thinking=self.enable_thinking,
-                    return_tensors="pt",
-                    continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
-                ).to(self.device)
+        # Auto-detect format: if input has "prompt" field, it's text completion
+        if not is_chat:
+            print(inputs[0])
+            # Text completion mode - use raw prompt without template
+            logger.info(f"  Raw prompt: {inputs[0]}")
+            ids = self.tokenizer(
+                inputs,
+                return_tensors="pt",
+                padding=True,
+                padding_side='left',
+            ).to(self.device)
+        else:
 
-            # Set seed for reproducibility if provided
-            if seed is not None:
-                torch.manual_seed(seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed_all(seed)
+            print("is_chat", inputs[0])
+            # Chat completion mode - use apply_chat_template
+            # logger.info(f"  Messages: {inputs[0]}")
+            # Check if tokenizer supports enable_thinking
+            ids = self.tokenizer.apply_chat_template(
+                inputs,
+                add_generation_prompt=True,
+                padding=True,
+                padding_side='left',
+                enable_thinking=self.enable_thinking,
+                return_tensors="pt",
+                continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
+            ).to(self.device)
 
-            # Build generation config using shared method
-            # Generate with direct parameters
-            generate_kwargs = {
-                "max_new_tokens": max_tokens,
-                "repetition_penalty": repetition_penalty,
-                "tokenizer": self.tokenizer,
-                "stop_strings": stop_strings,
-            }
+        # Set seed for reproducibility if provided
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
-            if temperature > 0:
-                generate_kwargs.update({
-                    "do_sample": True,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                })
-            else:
-                generate_kwargs["do_sample"] = False
+        # Build generation config using shared method
+        # Generate with direct parameters
+        generate_kwargs = {
+            "max_new_tokens": max_tokens,
+            "repetition_penalty": repetition_penalty,
+            "tokenizer": self.tokenizer,
+            "stop_strings": stop_strings,
+        }
 
-            outputs = self.model.generate(
-                input_ids=ids["input_ids"],
-                attention_mask=ids["attention_mask"],
-                **generate_kwargs
-            )
+        if temperature > 0:
+            generate_kwargs.update({
+                "do_sample": True,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+            })
+        else:
+            generate_kwargs["do_sample"] = False
 
-            # Extract generated tokens (all inputs have same length due to padding)
-            input_length = ids["input_ids"].shape[1]
-            generated_tokens = outputs[:, input_length:]
+        outputs = self.model.generate(
+            input_ids=ids["input_ids"],
+            attention_mask=ids["attention_mask"],
+            **generate_kwargs
+        )
 
-            # Batch decode all sequences with special tokens removed
-            texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+        # Extract generated tokens (all inputs have same length due to padding)
+        input_length = ids["input_ids"].shape[1]
+        generated_tokens = outputs[:, input_length:]
 
-            # Determine ended status based on token count
-            # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)
-            token_counts = [len(self.tokenizer(txt, add_special_tokens=False)["input_ids"]) for txt in texts]
-            ended_status = [count < max_tokens - 1 for count in token_counts]
+        # Batch decode all sequences with special tokens removed
+        texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 
-            return [GenOutput(txt, ended) for txt, ended in zip(texts, ended_status)]
+        # Determine ended status based on token count
+        # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)
+        token_counts = [len(self.tokenizer(txt, add_special_tokens=False)["input_ids"]) for txt in texts]
+        ended_status = [count < max_tokens - 1 for count in token_counts]
+
+        return [GenOutput(txt, ended) for txt, ended in zip(texts, ended_status)]
 
 
     def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:

@@ -37,6 +37,7 @@ model_specs:
   #   device: "cuda:1"  # vLLM still uses device parameter
 
 # Reward Model Specifications (for reward-based output aggregation)
+# Note: reward_specs are now automatically included in output_aggregation_params
 reward_specs:
   # - path: "Qwen/Qwen2.5-Math-PRM-7B"
   #   engine: "hf_rm"
@@ -62,15 +63,8 @@ ensemble:
   # Options: loop, progressive, random, reward_based
   output_aggregation_method: "loop"
   
-  # Progressive Mode Settings (only used when output_aggregation_method is "progressive")
-  progressive:
-    mode: "length"  # Options: length, token
-    length_thresholds: [1000, 2000, 3000]
-    special_tokens: ["<\\think>"]
-  
   # Generation Parameters
   max_rounds: 500
-  score_threshold: -2.0
   
   # Default generation parameters (can be overridden by API request)
   generation:
@@ -79,7 +73,7 @@ ensemble:
     top_p: 1.0
     presence_penalty: 0.0
     frequency_penalty: 0.0
-    stop_sequences: []
+    stop_strings: []
 
 # Engine-specific Options
 engine_options:

@@ -11,7 +11,7 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import List, Dict, Any, Union
 
-from ensemblehub.ensemble_methods.ensemble import run_ensemble
+from ensemblehub.ensemble_methods.ensemble import EnsembleFramework, EnsembleConfig, get_default_model_stats
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -199,19 +199,36 @@ def run_batch_inference(
             
             logger.debug(f"Processing batch {batch_idx // batch_size + 1}/{total_batches} with {len(examples)} examples")
             
-            # Run ensemble inference
-            results = run_ensemble(
+            # Create EnsembleConfig for this batch
+            output_aggregation_params = {
+                'reward_specs': reward_spec or [],
+                'score_threshold': score_threshold
+            }
+            
+            if output_aggregation_method == 'progressive':
+                output_aggregation_params.update({
+                    'progressive_mode': progressive_mode,
+                    'length_thresholds': length_thresholds or [1000, 2000, 3000],
+                    'special_tokens': special_tokens or [r"<\think>"]
+                })
+            
+            config = EnsembleConfig(
+                model_specs=model_specs,
+                model_selection_method=model_selection_method,
+                output_aggregation_method=output_aggregation_method,
+                output_aggregation_params=output_aggregation_params,
+                max_rounds=max_rounds
+            )
+            
+            # Create framework and run ensemble inference
+            framework = EnsembleFramework(config)
+            model_stats = get_default_model_stats()
+            
+            results = framework.ensemble(
                 examples=examples,
                 model_specs=model_specs,
-                reward_spec=reward_spec,
-                output_aggregation_method=output_aggregation_method,
-                model_selection_method=model_selection_method,
+                model_stats=model_stats,
                 max_tokens=max_tokens,
-                max_rounds=max_rounds,
-                score_threshold=score_threshold,
-                progressive_mode=progressive_mode,
-                length_thresholds=length_thresholds,
-                special_tokens=special_tokens,
                 is_chat=is_chat,
                 temperature=temperature,
                 top_p=top_p,
