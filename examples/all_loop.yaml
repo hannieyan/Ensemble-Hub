@@ -22,7 +22,7 @@ model_specs:
     # quantization: "none"  # Options: none, 8bit, 4bit
     # enable_thinking: false
   
-  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+  - path: "Qwen/Qwen3-1.7B"
     engine: "hf"
     # max_memory: {"0": "10GB", "cpu": "20GB"}  # Example: specific memory allocation
   

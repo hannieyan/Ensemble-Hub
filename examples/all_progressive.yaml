@@ -23,7 +23,7 @@ model_specs:
     # enable_thinking: false
     # num_gpus: 1.0  # GPU resources to allocate (0.5 for shared GPU, 1.0 for full GPU, 2 or more for large models)
   
-  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+  - path: "Qwen/Qwen3-1.7B"
     engine: "hf"
     # max_memory: {"0": "10GB", "cpu": "20GB"}  # Example: specific memory allocation
     # num_gpus: 0.5  # Use half GPU for smaller models

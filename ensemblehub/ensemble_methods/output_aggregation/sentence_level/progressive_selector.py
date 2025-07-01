@@ -165,7 +165,9 @@ class ProgressiveSelector(BaseSentenceAggregator):
     def _prepare_conversation(self, example: Union[str, List[Dict]], prompt: str, is_chat: bool) -> Union[str, List[Dict]]:
         """Prepare conversation with prompt."""
         if not is_chat:
-            return f"{example}\n\n{prompt}"
+            # For text completion, just return the prompt
+            # The example is already included in the prompt from _extract_question
+            return prompt
         
         if isinstance(example, list):
             conv = [msg for msg in example if msg.get("role") != "assistant"]

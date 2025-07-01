@@ -158,7 +158,7 @@ class EnsembleFramework:
             except ValueError:
                 # Actor doesn't exist, create new one
                 # Default GPU allocation: 0.5 for shared GPU usage, 0 for CPU-only
-                default_gpus = 0.5 if torch.cuda.is_available() else 0
+                default_gpus = 1 if torch.cuda.is_available() else 0
                 actor = get_remote_hf_generator_class(spec.get("num_gpus", default_gpus))
                 generator = actor.options(name=spec["path"], lifetime="detached").remote(
                     model_path=spec["path"],
