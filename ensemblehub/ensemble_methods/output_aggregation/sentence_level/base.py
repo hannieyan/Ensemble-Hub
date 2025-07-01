@@ -104,7 +104,7 @@ class BaseSentenceAggregator(ABC):
         return {
             "summary": self.attribution.get_attribution_summary(),
             "detailed": self.attribution.get_detailed_attribution(),
-            "formatted_text": self.attribution.format_text_with_attribution()
+            # "formatted_text": self.attribution.format_text_with_attribution()
         }
     
     def __repr__(self):
