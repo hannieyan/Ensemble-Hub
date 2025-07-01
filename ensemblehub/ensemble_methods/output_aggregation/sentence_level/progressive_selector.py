@@ -117,8 +117,14 @@ class ProgressiveSelector(BaseSentenceAggregator):
         
         # Select the two largest models
         large_model, small_model = self._select_two_largest_models(generators)
-        self.attribution = ModelAttribution()
         
+        # Clear attribution at the start of each request (new POST)
+        self.attribution = ModelAttribution()
+
+        # Get model names for attribution
+        large_model_name = ray.get(large_model.get_model_name.remote())
+        small_model_name = ray.get(small_model.get_model_name.remote())
+
         # Extract questions and prepare conversations
         questions = [self._extract_question(ex, is_chat) for ex in examples]
         outline_convs = [self._prepare_conversation(ex, self.outline_prompt_template.format(question=q), is_chat) 
@@ -141,10 +147,16 @@ class ProgressiveSelector(BaseSentenceAggregator):
         final_answers = self._batch_generate(small_model, [c for c in final_convs if c], 
                                            max(1000, max_tokens - self.outline_max_tokens), is_chat, "final", **kwargs)
         
-        # Combine results
+        # Combine results and record attribution for all examples in this request
         results, j = [], 0
-        for outline, conv in zip(outlines, final_convs):
+        for i, (outline, conv) in enumerate(zip(outlines, final_convs)):
+            if outline:
+                # Add outline segment with proper attribution (round number = example index)
+                self.attribution.add_segment(outline, large_model_name, i)
+            
             if conv and j < len(final_answers):
+                # Add final answer segment
+                self.attribution.add_segment(final_answers[j], small_model_name, i)
                 results.append(f"{outline}\n\n{final_answers[j]}")
                 j += 1
             else:
@@ -193,14 +205,11 @@ class ProgressiveSelector(BaseSentenceAggregator):
         
         try:
             outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
-            model_name = ray.get(model.get_model_name.remote())
             
             results = []
             for output in outputs:
                 text = output.text if hasattr(output, 'text') else str(output)
                 results.append(text)
-                if text and hasattr(self, 'attribution'):
-                    self.attribution.add_segment(text, model_name, stage)
             
             logger.info(f"{stage}: Generated {len(results)} outputs")
             return results
