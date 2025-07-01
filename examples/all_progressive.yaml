@@ -11,6 +11,7 @@ debug:
   show_input_details: false  # Show raw HTTP request body in logs
   show_output_details: true  # Show detailed output results in logs
   enable_thinking: false  # Enable thinking mode for models that support it
+  save_results: true  # Save results to disk (useful for debugging)
 
 # Model Specifications
 # Format: path, engine (hf/vllm/hf_rm/hf_gen/api), and optional parameters

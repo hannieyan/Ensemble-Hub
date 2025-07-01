@@ -43,7 +43,8 @@ def run_api() -> None:
         stop_strings=generator_args.stop_strings,
         show_output_details=ensemble_args.show_output_details,
         show_input_details=ensemble_args.show_input_details,
-        enable_thinking=generator_args.enable_thinking
+        enable_thinking=generator_args.enable_thinking,
+        save_results=ensemble_args.save_results
     )
     
     # Initialize Ray
@@ -71,6 +72,8 @@ def run_api() -> None:
         logger.info("Input details: Enabled")
     if ensemble_config.enable_thinking:
         logger.info("Thinking mode: Enabled")
+    if ensemble_config.save_results:
+        logger.info("💾 Result saving: Enabled (saves/logs/)")
     
     # Run server
     uvicorn.run(app, host=api_host, port=api_port)

@@ -20,6 +20,7 @@ import json
 
 # Import ensemble framework
 from ensemblehub.ensemble_methods.ensemble import EnsembleFramework, EnsembleConfig
+from ensemblehub.utils.save_results import save_api_result
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
         # Determine response object type (OpenAI standard)
         object_type = "chat.completion" if is_chat else "text.completion"
 
-        return ChatCompletionResponse(
+        response = ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4()}",
             object=object_type,
             created=int(time.time()),
@@ -328,6 +329,25 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
                 "total_tokens": total_prompt_tokens + total_completion_tokens
             }
         )
+        
+        # Save results if enabled
+        if ensemble_config.save_results:
+            try:
+                # Get raw request body for saving
+                raw_body = await request.body()
+                request_data = json.loads(raw_body.decode('utf-8')) if raw_body else req.dict()
+                
+                # Save the request-response pair
+                save_api_result(
+                    request_data=request_data,
+                    response_data=response.dict(),
+                    endpoint=endpoint_name,
+                    request_id=response.id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save results: {e}")
+        
+        return response
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request, req: ChatCompletionRequest) -> ChatCompletionResponse:

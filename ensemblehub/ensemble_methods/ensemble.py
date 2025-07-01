@@ -51,6 +51,7 @@ class EnsembleConfig(BaseModel):
     show_output_details: bool = Field(default=False, description="Show detailed output in logs")
     show_input_details: bool = Field(default=False, description="Show raw request in logs")
     enable_thinking: bool = Field(default=False, description="Enable thinking mode for supported models")
+    save_results: bool = Field(default=False, description="Save results to saves/logs directory")
     
     # Server configuration (not part of ensemble logic, but needed somewhere)
     model_specs: List[Dict[str, Any]] = Field(default_factory=list, description="Model specifications")

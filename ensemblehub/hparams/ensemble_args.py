@@ -34,3 +34,8 @@ class EnsembleArguments:
         default=False,
         metadata={"help": "Include detailed model attribution information in output."}
     )
+    
+    save_results: bool = field(
+        default=False,
+        metadata={"help": "Save results to saves/logs directory for debugging and analysis."}
+    )
