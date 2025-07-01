@@ -11,7 +11,6 @@ import torch.nn.functional as F
 import ray
 
 from .base import BaseModelSelector
-from ...generators import GeneratorPool
 
 logger = logging.getLogger(__name__)
 
