@@ -62,6 +62,7 @@ All other configuration is done via YAML files. See `examples/` directory for ex
 - `score_threshold` (float, default: -2.0): Score threshold for early stopping
 - `show_attribution` (bool, default: false): Include model attribution
 - `enable_thinking` (bool, default: false): Enable thinking mode
+- `save_results` (bool, default: false): Save all API requests/responses to disk for debugging
 
 ### API Endpoints
 
@@ -341,6 +342,104 @@ result = client.chat_completion(
 **Cannot access API**: Check firewall and port availability with `curl http://localhost:8000/status`
 
 **Configuration not loading**: Check YAML file path and syntax
+
+## 📄 Request/Response Logging
+
+When `save_results: true` is enabled in the configuration, all API requests and responses are saved to `saves/logs/api_session_{timestamp}.jsonl` in JSONL format:
+
+**Text Completion Example:**
+```json
+{
+  "timestamp": "2025-07-02T11:56:53.146701",
+  "request_id": "chatcmpl-e4da3f07-f892-473a-9588-3a18bf88b204",
+  "endpoint": "/v1/completions",
+  "request": {
+    "model": "ensemble",
+    "prompt": "What is 2+2?",
+    "max_tokens": 50
+  },
+  "response": {
+    "id": "chatcmpl-e4da3f07-f892-473a-9588-3a18bf88b204",
+    "object": "text.completion",
+    "choices": [
+      {
+        "index": 0,
+        "text": "2+2 equals 4. This is a basic arithmetic operation.",
+        "finish_reason": "stop",
+        "metadata": {
+          "selected_models": ["Qwen/Qwen3-4B", "Qwen/Qwen3-1.7B"],
+          "method": "all+progressive",
+          "attribution": {
+            "summary": "[R00:Qwen3-4B] → [R00:Qwen3-1.7B]",
+            "detailed": [
+              {
+                "text": "2+2 equals 4.",
+                "model": "Qwen/Qwen3-4B",
+                "round": 0,
+                "length": 12
+              },
+              {
+                "text": " This is a basic arithmetic operation.",
+                "model": "Qwen/Qwen3-1.7B",
+                "round": 0,
+                "length": 37
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "usage": {"prompt_tokens": 4, "completion_tokens": 10, "total_tokens": 14}
+  }
+}
+```
+
+**Chat Completion Example:**
+```json
+{
+  "timestamp": "2025-07-02T12:15:30.548291",
+  "request_id": "chatcmpl-f8e2a316-c894-582b-a699-4b29cf99c315",
+  "endpoint": "/v1/chat/completions",
+  "request": {
+    "model": "ensemble",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing"}
+    ],
+    "max_tokens": 100,
+    "temperature": 0.7
+  },
+  "response": {
+    "id": "chatcmpl-f8e2a316-c894-582b-a699-4b29cf99c315",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Quantum computing uses quantum mechanics principles to process information differently than classical computers..."
+        },
+        "finish_reason": "length",
+        "metadata": {
+          "selected_models": ["Qwen/Qwen3-4B"],
+          "method": "all+simple",
+          "attribution": {
+            "summary": "[R01:Qwen3-4B]",
+            "detailed": [
+              {
+                "text": "Quantum computing uses quantum mechanics principles to process information differently than classical computers...",
+                "model": "Qwen/Qwen3-4B",
+                "round": 1,
+                "length": 95
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "usage": {"prompt_tokens": 15, "completion_tokens": 95, "total_tokens": 110}
+  }
+}
+```
 
 ## 📖 Additional Resources
 
