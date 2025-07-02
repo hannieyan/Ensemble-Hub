@@ -258,17 +258,20 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
         """
         Common request processing logic for both chat and text completions.
         """
-        # Debug logging for raw request only (if enabled)
-        if ensemble_config.show_input_details:
-            # Print raw request body
+        # Read request body once for both debug logging and saving
+        raw_body = None
+        raw_json = None
+        if ensemble_config.show_input_details or ensemble_config.save_results:
             raw_body = await request.body()
             if raw_body:
-                logger.info("="*80)
-                logger.info(f"📨 Raw request at {endpoint_name}:")
-                # Try to parse and pretty print JSON
                 raw_json = json.loads(raw_body.decode('utf-8'))
-                logger.info(json.dumps(raw_json, indent=2, ensure_ascii=False))
-                logger.info("="*80)
+        
+        # Debug logging for raw request only (if enabled)
+        if ensemble_config.show_input_details and raw_json:
+            logger.info("="*80)
+            logger.info(f"📨 Raw request at {endpoint_name}:")
+            logger.info(json.dumps(raw_json, indent=2, ensure_ascii=False))
+            logger.info("="*80)
 
         # Validate input based on endpoint type
         if is_chat:
@@ -333,9 +336,8 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
         # Save results if enabled
         if ensemble_config.save_results:
             try:
-                # Get raw request body for saving
-                raw_body = await request.body()
-                request_data = json.loads(raw_body.decode('utf-8')) if raw_body else req.dict()
+                # Use already read request data, fallback to req.dict() if needed
+                request_data = raw_json if raw_json else req.dict()
                 
                 # Save the request-response pair
                 save_api_result(

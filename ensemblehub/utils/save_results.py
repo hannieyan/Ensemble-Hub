@@ -24,11 +24,30 @@ class ResultSaver:
         """
         self.base_dir = base_dir
         self._ensure_directory_exists()
+        
+        # Create single log file for the entire API session
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = os.path.join(self.base_dir, f"api_session_{timestamp}.jsonl")
+        
+        # Initialize the log file with session start info
+        session_start = {
+            "session_start": datetime.now().isoformat(),
+            "log_format": "jsonlines",
+            "description": "Ensemble-Hub API session log"
+        }
+        
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+            json.dump(session_start, f, ensure_ascii=False)
+            f.write('\n')
     
     def _ensure_directory_exists(self):
         """Create the save directory if it doesn't exist"""
         os.makedirs(self.base_dir, exist_ok=True)
-        logger.info(f"Result saver initialized: {self.base_dir}")
+        logger.info(f"💾 Result saver initialized: {self.base_dir}")
+        # Add debug info
+        abs_path = os.path.abspath(self.base_dir)
+        logger.info(f"💾 Absolute save path: {abs_path}")
+        logger.info(f"💾 Directory exists: {os.path.exists(abs_path)}")
     
     def save_request_result(
         self, 
@@ -38,7 +57,7 @@ class ResultSaver:
         request_id: Optional[str] = None
     ) -> str:
         """
-        Save a complete request-response pair to disk.
+        Append a complete request-response pair to the session log file.
         
         Args:
             request_data: The original HTTP request data
@@ -47,43 +66,31 @@ class ResultSaver:
             request_id: Optional request ID, will generate one if not provided
             
         Returns:
-            Path to the saved file
+            Path to the log file
         """
         if request_id is None:
             request_id = response_data.get("id", f"req_{int(time.time() * 1000000)}")
         
-        # Create timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Clean endpoint name for filename
-        endpoint_name = endpoint.replace("/", "_").replace("v1_", "")
-        
-        # Create filename
-        filename = f"{timestamp}_{endpoint_name}_{request_id}.json"
-        filepath = os.path.join(self.base_dir, filename)
-        
-        # Prepare complete log entry
+        # Prepare log entry for this request
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "request_id": request_id,
             "endpoint": endpoint,
             "request": request_data,
-            "response": response_data,
-            "metadata": {
-                "saved_at": datetime.now().isoformat(),
-                "file_version": "1.0"
-            }
+            "response": response_data
         }
         
         try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(log_entry, f, indent=2, ensure_ascii=False)
+            # Append to the session log file (JSONL format)
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                json.dump(log_entry, f, ensure_ascii=False)
+                f.write('\n')
             
-            logger.info(f"💾 Saved result to: {filepath}")
-            return filepath
+            logger.info(f"💾 Appended result to session log: {self.log_file}")
+            return self.log_file
             
         except Exception as e:
-            logger.error(f"Failed to save result to {filepath}: {e}")
+            logger.error(f"Failed to append result to {self.log_file}: {e}")
             return None
 
 

@@ -60,6 +60,7 @@ def _parse_args(parser: HfArgumentParser, args: Optional[Union[Dict[str, Any], l
         flat_args['show_output_details'] = debug_section.get('show_output_details', False)
         flat_args['show_input_details'] = debug_section.get('show_input_details', False)
         flat_args['enable_thinking'] = debug_section.get('enable_thinking', False)
+        flat_args['save_results'] = debug_section.get('save_results', False)
         
         # Extract method parameters
         flat_args['model_selection_method'] = ensemble_section.get('model_selection_method', 'all')
