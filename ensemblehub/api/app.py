@@ -109,11 +109,13 @@ def process_conversations(
         "model_selection_method": ensemble_config.model_selection_method,
         "max_rounds": ensemble_config.max_rounds,
         "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
-        "max_tokens": request.max_tokens,
-        "temperature": request.temperature,
-        "top_p": request.top_p,
         "show_output_details": ensemble_config.show_output_details
     }
+    
+    # Use request parameters if provided, otherwise use config defaults
+    base_params["max_tokens"] = request.max_tokens if request.max_tokens is not None else ensemble_config.max_tokens
+    base_params["temperature"] = request.temperature if request.temperature != 1.0 else ensemble_config.temperature
+    base_params["top_p"] = request.top_p if request.top_p != 1.0 else ensemble_config.top_p
     
     # Add optional parameters
     if request.seed is not None:

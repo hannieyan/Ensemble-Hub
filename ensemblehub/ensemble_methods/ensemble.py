@@ -42,10 +42,17 @@ class EnsembleConfig(BaseModel):
     model_selection_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for model selection method")
     output_aggregation_method: str = Field(default="loop", description="Output aggregation method: reward_based, random, loop, progressive, etc.")
     output_aggregation_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters for output aggregation method (includes reward_specs, score_threshold, etc.)")
+
+    max_rounds: int = Field(default=500, description="Maximum generation rounds")
     
     # Global generation parameters
-    max_rounds: int = Field(default=500, description="Maximum generation rounds")
+    max_tokens: Optional[int] = Field(default=None, description="Maximum tokens to generate")
+    temperature: float = Field(default=1.0, description="Sampling temperature")
+    top_p: float = Field(default=1.0, description="Top-p sampling")
+    top_k: int = Field(default=50, description="Top-k sampling")
+    repetition_penalty: float = Field(default=1.0, description="Repetition penalty")
     stop_strings: List[str] = Field(default_factory=list, description="Default stop strings for generation")
+    seed: Optional[int] = Field(default=None, description="Random seed")
     
     # Debug options
     show_output_details: bool = Field(default=False, description="Show detailed output in logs")
