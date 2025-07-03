@@ -192,21 +192,19 @@ def create_result_dict(output: str, result: Dict, example: Union[str, List[Dict]
     if "attribution" in result:
         metadata["attribution"] = result["attribution"]
 
-    # Calculate tokens
-    if not is_chat:
-        # In completion mode, example is the prompt string directly
-        prompt_tokens = len(example.split())
-    else:
-        # In chat mode, example is a list of message dicts
-        prompt_text = " ".join([msg.get("content", "") for msg in example])
-        prompt_tokens = len(prompt_text.split())
-
+    # Calculate completion tokens from attribution data
+    completion_tokens = 0
+    
+    if "attribution" in result and "detailed" in result["attribution"]:
+        # Sum up all token counts from attribution data
+        for segment in result["attribution"]["detailed"]:
+            completion_tokens += segment.get("length", 0)
+    
     return {
         "content": output,
         "finish_reason": finish_reason,
         "metadata": metadata,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": len(output.split())
+        "completion_tokens": completion_tokens
     }
 
 def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFramework) -> FastAPI:
@@ -299,7 +297,6 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
 
         # Build response
         choices = []
-        total_prompt_tokens = 0
         total_completion_tokens = 0
 
         for i, result in enumerate(results):
@@ -320,7 +317,6 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
                 choice.message = None
 
             choices.append(choice)
-            total_prompt_tokens += result["prompt_tokens"]
             total_completion_tokens += result["completion_tokens"]
 
         # Determine response object type (OpenAI standard)
@@ -333,9 +329,8 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
             model=req.model,
             choices=choices,
             usage={
-                "prompt_tokens": total_prompt_tokens,
                 "completion_tokens": total_completion_tokens,
-                "total_tokens": total_prompt_tokens + total_completion_tokens
+                "total_tokens": total_completion_tokens
             }
         )
         
