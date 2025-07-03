@@ -16,15 +16,22 @@ class ModelAttribution:
         self.segments = []  # List of (text_segment, model_name, round_number)
         self.current_round = 0
     
-    def add_segment(self, text: str, model_name: str, round_num: int = None):
-        """Add a text segment with its generating model."""
+    def add_segment(self, text: str, model_name: str, token_count: int, round_num: int = None):
+        """Add a text segment with its generating model.
+        
+        Args:
+            text: The generated text
+            model_name: Name of the model that generated this text
+            round_num: The round number (default: current_round)
+            token_count: Number of tokens in the text (if None, will store character count)
+        """
         if round_num is None:
             round_num = self.current_round
         self.segments.append({
             "text": text,
             "model": model_name,
             "round": round_num,
-            "length": len(text)
+            "length": token_count,
         })
     
     def get_attribution_summary(self) -> str:

@@ -117,6 +117,10 @@ def process_conversations(
     base_params["temperature"] = request.temperature if request.temperature != 1.0 else ensemble_config.temperature
     base_params["top_p"] = request.top_p if request.top_p != 1.0 else ensemble_config.top_p
     
+    # Debug logging
+    logger.info(f"🔍 Generation params: max_tokens={base_params.get('max_tokens')}, temperature={base_params.get('temperature')}, top_p={base_params.get('top_p')}")
+    logger.info(f"🔍 Config max_tokens={ensemble_config.max_tokens}, Request max_tokens={request.max_tokens}")
+    
     # Add optional parameters
     if request.seed is not None:
         base_params["seed"] = request.seed

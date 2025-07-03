@@ -73,7 +73,10 @@ def _parse_args(parser: HfArgumentParser, args: Optional[Union[Dict[str, Any], l
         flat_args['max_tokens'] = generation_section.get('max_tokens')
         flat_args['temperature'] = generation_section.get('temperature', 1.0)
         flat_args['top_p'] = generation_section.get('top_p', 1.0)
+        flat_args['top_k'] = generation_section.get('top_k', 50)
+        flat_args['repetition_penalty'] = generation_section.get('repetition_penalty', 1.0)
         flat_args['stop_strings'] = generation_section.get('stop_strings', [])
+        flat_args['seed'] = generation_section.get('seed')
         
         # Extract generator parameters
         engine_options = args.get('engine_options', {})

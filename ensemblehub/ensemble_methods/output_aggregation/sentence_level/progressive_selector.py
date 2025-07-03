@@ -133,34 +133,39 @@ class ProgressiveSelector(BaseSentenceAggregator):
         
         # Stage 1: Batch generate outlines
         logger.info(f"📝 Stage 1: Generating {len(examples)} outlines")
-        outlines = self._batch_generate(large_model, outline_convs, self.outline_max_tokens, is_chat, "outline", **kwargs)
+        outline_results = self._batch_generate(large_model, outline_convs, self.outline_max_tokens, is_chat, "outline", **kwargs)
         
         # Stage 2: Prepare and generate final answers
         logger.info(f"🔧 Stage 2: Generating final answers")
-        for ex, outline in zip(examples, outlines):
-            if outline:
-                conv = self._prepare_conversation(ex, self.final_prompt_template.format(outline=outline), is_chat)
+        for ex, (outline_text, _) in zip(examples, outline_results):
+            if outline_text:
+                conv = self._prepare_conversation(ex, self.final_prompt_template.format(outline=outline_text), is_chat)
                 final_convs.append(conv)
             else:
                 final_convs.append(None)
         
-        final_answers = self._batch_generate(small_model, [c for c in final_convs if c], 
-                                           max(1000, max_tokens - self.outline_max_tokens), is_chat, "final", **kwargs)
+        # Calculate remaining tokens for final answers
+        final_max_tokens = max_tokens if max_tokens else 16384
+        final_max_tokens = max(1000, final_max_tokens - self.outline_max_tokens)
+        
+        final_answer_results = self._batch_generate(small_model, [c for c in final_convs if c], 
+                                                   final_max_tokens, is_chat, "final", **kwargs)
         
         # Combine results and record attribution for all examples in this request
         results, j = [], 0
-        for i, (outline, conv) in enumerate(zip(outlines, final_convs)):
-            if outline:
+        for i, ((outline_text, outline_tokens), conv) in enumerate(zip(outline_results, final_convs)):
+            if outline_text:
                 # Add outline segment with proper attribution (round number = example index)
-                self.attribution.add_segment(outline, large_model_name, i)
+                self.attribution.add_segment(outline_text, large_model_name, outline_tokens, i)
             
-            if conv and j < len(final_answers):
+            if conv and j < len(final_answer_results):
                 # Add final answer segment
-                self.attribution.add_segment(final_answers[j], small_model_name, i)
-                results.append(f"{outline}\n\n{final_answers[j]}")
+                final_text, final_tokens = final_answer_results[j]
+                self.attribution.add_segment(final_text, small_model_name, final_tokens, i)
+                results.append(f"{outline_text}\n\n{final_text}")
                 j += 1
             else:
-                results.append(outline or "")
+                results.append(outline_text or "")
         
         return results
     
@@ -187,8 +192,12 @@ class ProgressiveSelector(BaseSentenceAggregator):
             return conv
         return [{"role": "user", "content": prompt}]
     
-    def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, stage: str, **kwargs) -> List[str]:
-        """Batch generate with model."""
+    def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, stage: str, **kwargs) -> List[Tuple[str, int]]:
+        """Batch generate with model and return text with token counts.
+        
+        Returns:
+            List of tuples (text, token_count) for each generated output
+        """
         if not conversations:
             return []
         
@@ -206,16 +215,21 @@ class ProgressiveSelector(BaseSentenceAggregator):
         try:
             outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
             
+            # Get tokenizer to count tokens
+            tokenizer = ray.get(model.get_tokenizer.remote())
+            
             results = []
             for output in outputs:
                 text = output.text if hasattr(output, 'text') else str(output)
-                results.append(text)
+                # Count tokens for the generated text
+                token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+                results.append((text, token_count))
             
-            logger.info(f"{stage}: Generated {len(results)} outputs")
+            logger.info(f"{stage}: Generated {len(results)} outputs with total {sum(tc for _, tc in results)} tokens")
             return results
         except Exception as e:
             logger.error(f"Error in {stage} generation: {e}")
-            return [""] * len(conversations)
+            return [("", 0)] * len(conversations)
     
     def __repr__(self):
         return f"ProgressiveSelector(outline_tokens={self.outline_max_tokens})"

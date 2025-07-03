@@ -40,7 +40,15 @@ def run_api() -> None:
         output_aggregation_method=method_args.output_aggregation_method,
         output_aggregation_params=method_args.output_aggregation_params,
         max_rounds=ensemble_args.max_rounds,
+        # Generation parameters
+        max_tokens=generator_args.max_tokens,
+        temperature=generator_args.temperature,
+        top_p=generator_args.top_p,
+        top_k=generator_args.top_k,
+        repetition_penalty=generator_args.repetition_penalty,
         stop_strings=generator_args.stop_strings,
+        seed=generator_args.seed,
+        # Debug options
         show_output_details=ensemble_args.show_output_details,
         show_input_details=ensemble_args.show_input_details,
         enable_thinking=generator_args.enable_thinking,
@@ -66,6 +74,7 @@ def run_api() -> None:
     logger.info(f"Configuration: {ensemble_config.model_selection_method}+{ensemble_config.output_aggregation_method}")
     logger.info(f"Models: {len(ensemble_config.model_specs)}")
     logger.info(f"Max rounds: {ensemble_config.max_rounds}")
+    logger.info(f"Default generation params: max_tokens={ensemble_config.max_tokens}, temperature={ensemble_config.temperature}, top_p={ensemble_config.top_p}")
     if ensemble_config.show_output_details:
         logger.info("Output details: Enabled")
     if ensemble_config.show_input_details:
