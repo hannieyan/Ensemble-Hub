@@ -13,6 +13,34 @@ from .base import BaseSentenceAggregator, ModelAttribution
 logger = logging.getLogger(__name__)
 
 
+def select_two_largest_models(generators: List) -> Tuple[Any, Any]:
+    """
+    Select the two models with the largest parameters.
+    Returns (large_model, small_model).
+    """
+    if len(generators) < 2:
+        raise ValueError(f"ProgressiveSelector requires at least 2 models, got {len(generators)}")
+
+    # Get sizes for all generators
+    gen_sizes = []
+    for gen in generators:
+        size = ray.get(gen.get_model_size.remote())
+        gen_sizes.append((gen, size))
+        logger.info(f"Model size detected: {ray.get(gen.get_model_name.remote()) if hasattr(gen, 'get_model_name') else 'unknown'} = {size}B params")
+
+    # Sort by size (descending) and get top 2
+    gen_sizes.sort(key=lambda x: x[1], reverse=True)
+    large_model = gen_sizes[0][0]
+    small_model = gen_sizes[1][0]
+
+    large_name = ray.get(large_model.get_model_name.remote()) if hasattr(large_model, 'get_model_name') else 'unknown'
+    small_name = ray.get(small_model.get_model_name.remote()) if hasattr(small_model, 'get_model_name') else 'unknown'
+
+    logger.info(f"Selected models: Large={large_name} ({gen_sizes[0][1]}B), Small={small_name} ({gen_sizes[1][1]}B)")
+
+    return large_model, small_model
+
+
 class ProgressiveSelector(BaseSentenceAggregator):
     """
     Progressive model selector that uses exactly 2 models:
@@ -37,8 +65,6 @@ class ProgressiveSelector(BaseSentenceAggregator):
             outline_max_tokens: Maximum tokens for the outline generation (default: 500)
             outline_prompt_template: Template for the outline prompt. Use {question} as placeholder.
                                    If None, uses default template based on template_language.
-            final_prompt_template: Template for the final answer prompt. Use {outline} as placeholder.
-                                 If None, uses default template based on template_language.
             template_language: Language for default prompts ("zh" for Chinese, "en" for English)
             name: Optional name for the selector
         """
@@ -54,11 +80,6 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 "Question: {question}\n\n"
                 "Solution Outline:"
             )
-            self.final_prompt_template = final_prompt_template or (
-                "Based on the following solution outline, please provide a detailed answer:\n\n"
-                "{outline}\n\n"
-                "Complete Solution:"
-            )
         else:  # Default to Chinese
             self.outline_prompt_template = outline_prompt_template or (
                 "请仔细分析以下问题，并列出一个简要的解答思路大纲。"
@@ -66,41 +87,9 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 "问题：{question}\n\n"
                 "解答思路大纲："
             )
-            self.final_prompt_template = final_prompt_template or (
-                "基于以下解题思路大纲，请详细解答问题：\n\n"
-                "{outline}\n\n"
-                "请给出完整的解答："
-            )
         
         self._model_sizes = {}  # Cache for model sizes
-    
-    def _select_two_largest_models(self, generators: List) -> Tuple[Any, Any]:
-        """
-        Select the two models with the largest parameters.
-        Returns (large_model, small_model).
-        """
-        if len(generators) < 2:
-            raise ValueError(f"ProgressiveSelector requires at least 2 models, got {len(generators)}")
-        
-        # Get sizes for all generators
-        gen_sizes = []
-        for gen in generators:
-            size = ray.get(gen.get_model_size.remote())
-            gen_sizes.append((gen, size))
-            logger.info(f"Model size detected: {ray.get(gen.get_model_name.remote()) if hasattr(gen, 'get_model_name') else 'unknown'} = {size}B params")
-        
-        # Sort by size (descending) and get top 2
-        gen_sizes.sort(key=lambda x: x[1], reverse=True)
-        large_model = gen_sizes[0][0]
-        small_model = gen_sizes[1][0]
-        
-        large_name = ray.get(large_model.get_model_name.remote()) if hasattr(large_model, 'get_model_name') else 'unknown'
-        small_name = ray.get(small_model.get_model_name.remote()) if hasattr(small_model, 'get_model_name') else 'unknown'
-        
-        logger.info(f"Selected models: Large={large_name} ({gen_sizes[0][1]}B), Small={small_name} ({gen_sizes[1][1]}B)")
-        
-        return large_model, small_model
-    
+
     def aggregate_generation(
         self,
         generators: List,
@@ -116,7 +105,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
             return [""] * len(examples)
         
         # Select the two largest models
-        large_model, small_model = self._select_two_largest_models(generators)
+        large_model, small_model = select_two_largest_models(generators)
         
         # Clear attribution at the start of each request (new POST)
         self.attribution = ModelAttribution()
@@ -137,9 +126,9 @@ class ProgressiveSelector(BaseSentenceAggregator):
         
         # Stage 2: Prepare and generate final answers
         logger.info(f"🔧 Stage 2: Generating final answers")
-        for ex, (outline_text, _) in zip(examples, outline_results):
+        for ex, (outline_text, _), q in zip(examples, outline_results, questions):
             if outline_text:
-                conv = self._prepare_conversation(ex, self.final_prompt_template.format(outline=outline_text), is_chat)
+                conv = self._prepare_final_conversation(q, outline_text, is_chat)
                 final_convs.append(conv)
             else:
                 final_convs.append(None)
@@ -148,7 +137,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
         final_max_tokens = max_tokens if max_tokens else 16384
         final_max_tokens = max(1000, final_max_tokens - self.outline_max_tokens)
         
-        final_answer_results = self._batch_generate(small_model, [c for c in final_convs if c], 
+        final_results = self._batch_generate(small_model, [c for c in final_convs if c],
                                                    final_max_tokens, is_chat, "final", **kwargs)
         
         # Combine results and record attribution for all examples in this request
@@ -158,14 +147,14 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 # Add outline segment with proper attribution (round number = example index)
                 self.attribution.add_segment(outline_text, large_model_name, outline_tokens, i)
             
-            if conv and j < len(final_answer_results):
+            if conv and j < len(final_results):
                 # Add final answer segment
-                final_text, final_tokens = final_answer_results[j]
+                final_text, final_tokens = final_results[j]
                 self.attribution.add_segment(final_text, small_model_name, final_tokens, i)
-                results.append(f"{outline_text}\n\n{final_text}")
+                results.append(final_text)  # Only append final_text to results
                 j += 1
             else:
-                results.append(outline_text or "")
+                results.append("")  # Return empty string if no final answer
         
         return results
     
@@ -192,6 +181,18 @@ class ProgressiveSelector(BaseSentenceAggregator):
             return conv
         return [{"role": "user", "content": prompt}]
     
+    def _prepare_final_conversation(self, question: str, outline: str, is_chat: bool) -> Union[str, List[Dict]]:
+        """Prepare final conversation with special format for stage 2."""
+        if not is_chat:
+            # For text completion, include outline in the prompt
+            return f"Based on the following examples and solution outline, please provide the answer with target format. {question}<think>{outline}</think>The best answer is"
+        
+        # For chat mode, use system message and user message with <think> tag
+        return [
+            {"role": "system", "content": "Based on the following examples and solution outline, please provide the answer with target format."},
+            {"role": "user", "content": f"{question}<think>{outline}</think>"}
+        ]
+    
     def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, stage: str, **kwargs) -> List[Tuple[str, int]]:
         """Batch generate with model and return text with token counts.
         
@@ -206,30 +207,24 @@ class ProgressiveSelector(BaseSentenceAggregator):
             "temperature": kwargs.get("temperature", 0.7),
             "top_p": kwargs.get("top_p", 0.9),
             "is_chat": is_chat,
+            "seed": kwargs.get("seed", 1234),
+            "stop_strings": kwargs.get("stop_strings", None) if stage == "final" else ["</think>"],
         }
-        
-        for key in ['seed', 'stop_strings']:
-            if key in kwargs:
-                gen_kwargs[key] = kwargs[key]
-        
-        try:
-            outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
-            
-            # Get tokenizer to count tokens
-            tokenizer = ray.get(model.get_tokenizer.remote())
-            
-            results = []
-            for output in outputs:
-                text = output.text if hasattr(output, 'text') else str(output)
-                # Count tokens for the generated text
-                token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
-                results.append((text, token_count))
-            
-            logger.info(f"{stage}: Generated {len(results)} outputs with total {sum(tc for _, tc in results)} tokens")
-            return results
-        except Exception as e:
-            logger.error(f"Error in {stage} generation: {e}")
-            return [("", 0)] * len(conversations)
+
+        outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
+
+        # Get tokenizer to count tokens
+        tokenizer = ray.get(model.get_tokenizer.remote())
+
+        results = []
+        for output in outputs:
+            text = output.text if hasattr(output, 'text') else str(output)
+            # Count tokens for the generated text
+            token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            results.append((text, token_count))
+
+        logger.info(f"{stage}: Generated {len(results)} outputs with total {sum(tc for _, tc in results)} tokens")
+        return results
     
     def __repr__(self):
         return f"ProgressiveSelector(outline_tokens={self.outline_max_tokens})"

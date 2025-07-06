@@ -17,17 +17,18 @@ debug:
 # Format: path, engine (hf/vllm/hf_rm/hf_gen/api), and optional parameters
 # Note: For HF models, device is controlled via max_memory parameter
 model_specs:
-  - path: "Qwen/Qwen3-4B"
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
     engine: "hf"
     # max_memory: null  # null means auto device allocation
     # quantization: "none"  # Options: none, 8bit, 4bit
-    # enable_thinking: false
+    enable_thinking: false
     # num_gpus: 1.0  # GPU resources to allocate (0.5 for shared GPU, 1.0 for full GPU, 2 or more for large models)
   
-  - path: "Qwen/Qwen3-1.7B"
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
     engine: "hf"
     # max_memory: {"0": "10GB", "cpu": "20GB"}  # Example: specific memory allocation
     # num_gpus: 0.5  # Use half GPU for smaller models
+    enable_thinking: false
   
   # Additional model examples (uncomment to use):
   # - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"

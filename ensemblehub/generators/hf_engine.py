@@ -110,7 +110,7 @@ class HFGenerator:
         top_k=50,
         repetition_penalty=1.1,
         stop_strings: Optional[Union[str, List[str]]] = None,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 1234,
     ) -> Union[GenOutput, List[GenOutput]]:
 
         # stop_strings
@@ -144,10 +144,9 @@ class HFGenerator:
             ).to(self.device)
 
         # Set seed for reproducibility if provided
-        if seed is not None:
-            torch.manual_seed(seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
         # Build generation config using shared method
         # Generate with direct parameters
