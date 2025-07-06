@@ -117,16 +117,30 @@ pip install -r requirements.txt
 ### 💻 Quickstart
 
 > [!NOTE]
-> Please update ensemblehub/inference.py to custom your ensembled LLMs.
+> The inference script now supports both YAML configuration files and command-line arguments.
 
+**Using YAML configuration (recommended):**
+```shell
+python -m ensemblehub.inference \
+   --config examples/all_progressive.yaml \
+   --input_path data/AIME2024/aime/aime24.json \
+   --output_path saves/aime24.jsonl \
+   --max_examples 500 \
+   --batch_size 4 \
+   --input_format dict
+```
+
+**Using command-line arguments only:**
 ```shell
 python -m ensemblehub.inference \
    --input_path data/AIME2024/aime/aime24.json \
    --output_path saves/aime24.jsonl \
    --max_examples 500 \
    --batch_size 4 \
-   --output_aggregation_method loop \
-   --max_tokens 2048
+   --output_aggregation_method progressive \
+   --max_tokens 2048 \
+   --model_specs "Qwen/Qwen2.5-0.5B-Instruct:hf:auto" \
+   --model_specs "Qwen/Qwen2.5-1.5B-Instruct:hf:auto"
 ```
 
 *Under the hood: models are loaded once → the reward model scores each round → loop stops when the selected segment ends with an EOS token.*
