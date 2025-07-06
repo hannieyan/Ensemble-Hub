@@ -125,9 +125,8 @@ python -m ensemblehub.inference \
    --config examples/all_progressive.yaml \
    --input_path data/AIME2024/aime/aime24.json \
    --output_path saves/aime24.jsonl \
-   --max_examples 500 \
-   --batch_size 4 \
-   --input_format dict
+   --max_examples 10 \
+   --batch_size 1
 ```
 
 **Using command-line arguments only:**

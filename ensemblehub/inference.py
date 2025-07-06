@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Batch inference script for Ensemble-Hub.
-Rewritten to follow api.py patterns with YAML configuration support.
+Simple version that converts all inputs to strings for the models.
 """
 
 import argparse
@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 import time
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Any
 
 import ray
 from tqdm import tqdm
@@ -27,128 +27,80 @@ def load_dataset_json(input_path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
-def prepare_example_for_inference(
-    example: Union[str, Dict[str, Any]],
-    input_format: str = "prompt"
-) -> Dict[str, Any]:
-    """
-    Prepare a single example for inference based on input format.
+def prepare_prompt_from_example(example: Dict[str, Any]) -> str:
+    """Convert any example format to a simple string prompt."""
+    if isinstance(example, str):
+        return example
     
-    Args:
-        example: Raw example from dataset
-        input_format: Format type - "prompt", "dict", or "chat"
+    if isinstance(example, dict):
+        # Handle different dict formats
+        if "messages" in example:
+            # Chat format - convert to string
+            messages = example["messages"]
+            prompt_parts = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                prompt_parts.append(f"{role}: {content}")
+            return "\n".join(prompt_parts)
         
-    Returns:
-        Formatted example ready for inference
-    """
-    if input_format == "prompt":
-        # Direct string prompt
-        if isinstance(example, str):
-            prompt = example
-        elif isinstance(example, dict):
-            # Concatenate instruction and input if available
+        elif "instruction" in example:
+            # Instruction format
             instruction = example.get("instruction", "")
             input_text = example.get("input", "")
-            prompt = f"{instruction}\n{input_text}".strip() if instruction else input_text
+            if input_text:
+                return f"{instruction}\n{input_text}"
+            else:
+                return instruction
+        
+        elif "prompt" in example:
+            return str(example["prompt"])
+        
         else:
-            raise ValueError(f"Invalid example type for prompt format: {type(example)}")
-        
-        return {
-            "prompt": prompt,
-            "is_completion": True,
-            "label": example.get("output", "") if isinstance(example, dict) else ""
-        }
+            # Fallback: convert entire dict to string
+            return str(example)
     
-    elif input_format == "dict":
-        # Dictionary format with instruction/input/output
-        if not isinstance(example, dict):
-            raise ValueError(f"Expected dict for dict format, got {type(example)}")
-        
-        return {
-            "instruction": example.get("instruction", ""),
-            "input": example.get("input", ""),
-            "output": "",
-            "label": example.get("output", ""),
-            "is_completion": False
-        }
-    
-    elif input_format == "chat":
-        # Chat format with messages
-        if isinstance(example, dict) and "messages" in example:
-            messages = example["messages"]
-        elif isinstance(example, list):
-            messages = example
-        else:
-            raise ValueError(f"Invalid example type for chat format: {type(example)}")
-        
-        return {
-            "messages": messages,
-            "output": "",
-            "label": example.get("output", "") if isinstance(example, dict) else "",
-            "is_completion": False
-        }
-    
-    else:
-        raise ValueError(f"Unknown input format: {input_format}")
+    # Fallback for any other type
+    return str(example)
 
 
 def process_batch(
-    batch: List[Dict[str, Any]],
+    batch: List[str],
     ensemble_framework: EnsembleFramework,
     ensemble_config: EnsembleConfig,
+    original_examples: List[Dict[str, Any]],
     show_attribution: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Process a batch of examples through the ensemble framework.
-    
-    Args:
-        batch: List of prepared examples
-        ensemble_framework: Initialized ensemble framework
-        ensemble_config: Configuration for ensemble
-        show_attribution: Whether to include attribution data
-        
-    Returns:
-        List of results with predictions
+    Process a batch of string prompts through the ensemble framework.
     """
     try:
-        # Extract inputs based on format
-        if "messages" in batch[0]:
-            inputs = [ex["messages"] for ex in batch]
-        elif "instruction" in batch[0]:
-            inputs = batch
-        else:
-            inputs = [ex["prompt"] for ex in batch]
-        
-        # Run ensemble inference
-        outputs, selected_models, attribution = ensemble_framework.ensemble(
-            inputs,
+        # Run ensemble inference with string prompts
+        ensemble_results = ensemble_framework.ensemble(
+            batch,
             model_specs=ensemble_config.model_specs,
-            is_chat=("messages" in batch[0])
+            is_chat=False  # Always use text completion mode
         )
         
         # Prepare results
         results = []
-        for i, (example, output) in enumerate(zip(batch, outputs)):
+        for i, (prompt, ensemble_result, original_example) in enumerate(zip(batch, ensemble_results, original_examples)):
             result = {
-                "prompt": example.get("prompt") or example.get("messages") or 
-                         f"{example.get('instruction', '')}\n{example.get('input', '')}".strip(),
-                "predict": output,
-                "label": example.get("label", ""),
-                "selected_models": selected_models,
-                "method": ensemble_config.output_aggregation_method,
-                "config": {
+                "prompt": prompt,
+                "predict": ensemble_result.get("output", ""),
+                "label": original_example.get("output", "") or original_example.get("label", ""),
+                "selected_models": ensemble_result.get("selected_models", []),
+                "method": ensemble_result.get("method", ensemble_config.output_aggregation_method),
+                "config": ensemble_result.get("config", {
                     "model_selection_method": ensemble_config.model_selection_method,
                     "output_aggregation_method": ensemble_config.output_aggregation_method,
                     "temperature": ensemble_config.temperature,
                     "max_tokens": ensemble_config.max_tokens,
-                }
+                })
             }
             
-            if show_attribution and attribution:
-                try:
-                    result["attribution"] = attribution[i]
-                except (IndexError, TypeError):
-                    logger.warning(f"Attribution data not available for example {i}")
+            if show_attribution and "attribution" in ensemble_result:
+                result["attribution"] = ensemble_result["attribution"]
             
             results.append(result)
         
@@ -160,24 +112,17 @@ def process_batch(
         logger.error(f"Traceback: {traceback.format_exc()}")
         # Return error results for all examples in batch
         return [{
-            "prompt": ex.get("prompt", str(ex)),
+            "prompt": prompt,
             "predict": "",
-            "label": ex.get("label", ""),
+            "label": original_example.get("output", "") or original_example.get("label", ""),
             "error": str(e),
             "selected_models": [],
             "method": ensemble_config.output_aggregation_method
-        } for ex in batch]
+        } for prompt, original_example in zip(batch, original_examples)]
 
 
 def save_results(results: List[Dict[str, Any]], output_path: str, mode: str = "a"):
-    """
-    Save results to a JSONL file.
-    
-    Args:
-        results: List of result dictionaries
-        output_path: Path to output file
-        mode: File open mode ("a" for append, "w" for write)
-    """
+    """Save results to a JSONL file."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     with open(output_path, mode, encoding="utf-8") as f:
@@ -203,7 +148,7 @@ def main():
         help="Path to YAML configuration file (e.g., examples/all_progressive.yaml)"
     )
     
-    # Data paths (these are specific to inference, not in the YAML)
+    # Data paths
     parser.add_argument(
         "--input_path",
         type=str,
@@ -217,7 +162,7 @@ def main():
         help="Path to output JSONL file"
     )
     
-    # Processing options (these are specific to inference, not in the YAML)
+    # Processing options
     parser.add_argument(
         "--batch_size",
         type=int,
@@ -229,13 +174,6 @@ def main():
         type=int,
         default=None,
         help="Maximum number of examples to process"
-    )
-    parser.add_argument(
-        "--input_format",
-        type=str,
-        default="prompt",
-        choices=["prompt", "dict", "chat"],
-        help="Input format type"
     )
     parser.add_argument(
         "--show_attribution",
@@ -319,8 +257,15 @@ def main():
         logger.info(f"Resuming from {processed_count} processed examples")
         dataset = dataset[processed_count:]
     
+    # Convert all examples to string prompts
+    logger.info("Converting examples to prompts...")
+    prompts = []
+    for example in dataset:
+        prompt = prepare_prompt_from_example(example)
+        prompts.append(prompt)
+    
     # Process in batches
-    total_examples = len(dataset)
+    total_examples = len(prompts)
     logger.info(f"Processing {total_examples} examples in batches of {args.batch_size}")
     
     all_results = []
@@ -328,27 +273,15 @@ def main():
     
     with tqdm(total=total_examples, initial=processed_count, desc="Processing") as pbar:
         for i in range(0, total_examples, args.batch_size):
-            batch_data = dataset[i:i + args.batch_size]
-            
-            # Prepare batch
-            batch = []
-            for example in batch_data:
-                try:
-                    prepared = prepare_example_for_inference(example, args.input_format)
-                    batch.append(prepared)
-                except Exception as e:
-                    logger.error(f"Error preparing example: {e}")
-                    batch.append({
-                        "prompt": str(example),
-                        "label": "",
-                        "error": str(e)
-                    })
+            batch_prompts = prompts[i:i + args.batch_size]
+            batch_examples = dataset[i:i + args.batch_size]
             
             # Process batch
             results = process_batch(
-                batch,
+                batch_prompts,
                 ensemble_framework,
                 ensemble_config,
+                batch_examples,
                 args.show_attribution
             )
             
@@ -356,7 +289,7 @@ def main():
             save_results(results, args.output_path, mode="a" if i > 0 or args.resume else "w")
             all_results.extend(results)
             
-            pbar.update(len(batch_data))
+            pbar.update(len(batch_prompts))
     
     # Summary statistics
     elapsed_time = time.time() - start_time
