@@ -89,11 +89,21 @@ def process_batch(
     Process a batch of string prompts through the ensemble framework.
     """
     try:
+        # Get all config parameters
+        config_dict = ensemble_config.model_dump()
+        
+        # Build parameters, excluding model_specs since we pass it separately
+        gen_params = {
+            k: v for k, v in config_dict.items() 
+            if k not in ["model_specs"] and v is not None
+        }
+        
         # Run ensemble inference with string prompts
         ensemble_results = ensemble_framework.ensemble(
             batch,
             model_specs=ensemble_config.model_specs,
-            is_chat=False  # Always use text completion mode
+            is_chat=False,  # Always use text completion mode
+            **gen_params
         )
         
         # Prepare results
@@ -227,6 +237,9 @@ def main():
         level=logging.DEBUG if ensemble_args.show_output_details else logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    
+    # Suppress Ray's filelock debug messages
+    logging.getLogger("filelock").setLevel(logging.WARNING)
     
     # Initialize Ray
     if not ray.is_initialized():

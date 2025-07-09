@@ -96,7 +96,6 @@ class ProgressiveSelector(BaseSentenceAggregator):
         examples: List[Union[str, List[Dict]]],
         max_rounds: int = 500,
         max_tokens: int = 16384,
-        max_new_tokens_per_round: int = 256,
         is_chat: bool = True,
         **kwargs
     ) -> List[str]:
@@ -122,6 +121,7 @@ class ProgressiveSelector(BaseSentenceAggregator):
         
         # Stage 1: Batch generate outlines
         logger.info(f"📝 Stage 1: Generating outlines")
+        logger.info(f"  Outline max tokens: {self.outline_max_tokens}")
         outline_results = self._batch_generate(large_model, outline_convs, self.outline_max_tokens, is_chat, "outline", **kwargs)
         
         # Stage 2: Prepare and generate final answers
@@ -134,9 +134,8 @@ class ProgressiveSelector(BaseSentenceAggregator):
                 final_convs.append(None)
         
         # Calculate remaining tokens for final answers
-        final_max_tokens = max_tokens if max_tokens else 16384
-        final_max_tokens = max(1000, final_max_tokens - self.outline_max_tokens)
-        print(f"Final max tokens for answers: {final_max_tokens}")
+        final_max_tokens = max_tokens - self.outline_max_tokens
+        logger.info(f"  Final max tokens for answers: {final_max_tokens}")
         
         final_results = self._batch_generate(small_model, [c for c in final_convs if c], final_max_tokens, is_chat, "final", **kwargs)
         

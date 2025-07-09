@@ -192,7 +192,7 @@ class EnsembleFramework:
         selected_generators = [
             generators[spec['path']] for spec in selected_specs if spec['path'] in generators
         ]
-        logger.info(f"Selected {len(selected_generators)} models: {list(spec['path'] for spec in selected_specs)}")
+        logger.info(f"  Select {len(selected_generators)} models: {list(spec['path'] for spec in selected_specs)}")
 
         # Stage 2: Output Generation/Aggregation
         logger.info(f"🔗 Stage 2: Output Aggregation ({self.config.output_aggregation_method} - {self.aggregation_level})")

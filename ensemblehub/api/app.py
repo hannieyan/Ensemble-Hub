@@ -101,29 +101,24 @@ def process_conversations(
         spec_copy["enable_thinking"] = spec.get("enable_thinking", ensemble_config.enable_thinking)
         model_specs_with_format.append(spec_copy)
     
-    # Prepare common ensemble parameters
+    # Get all config parameters as base
+    config_dict = ensemble_config.model_dump()
+    
+    # Build base_params with all config values
     base_params = {
-        "model_specs": model_specs_with_format,
-        "reward_spec": ensemble_config.output_aggregation_params.get('reward_specs', []),
-        "output_aggregation_method": ensemble_config.output_aggregation_method,
-        "model_selection_method": ensemble_config.model_selection_method,
-        "max_rounds": ensemble_config.max_rounds,
-        "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
-        "show_output_details": ensemble_config.show_output_details
+        k: v for k, v in config_dict.items() 
+        if k not in ["model_specs"]  # We already handled model_specs above
     }
     
-    # Use request parameters if provided, otherwise use config defaults
-    base_params["max_tokens"] = request.max_tokens if request.max_tokens is not None else ensemble_config.max_tokens
-    base_params["temperature"] = request.temperature if request.temperature != 1.0 else ensemble_config.temperature
-    base_params["top_p"] = request.top_p if request.top_p != 1.0 else ensemble_config.top_p
+    # Use the processed model_specs
+    base_params["model_specs"] = model_specs_with_format
     
+    # Override with request parameters (only those explicitly set by user)
+    request_dict = request.model_dump(exclude_unset=True)
+    base_params.update(request_dict)
+
     # Debug logging
     logger.info(f"🔍 Generation params: max_tokens={base_params.get('max_tokens')}, temperature={base_params.get('temperature')}, top_p={base_params.get('top_p')}")
-    logger.info(f"🔍 Config max_tokens={ensemble_config.max_tokens}, Request max_tokens={request.max_tokens}")
-    
-    # Add optional parameters
-    if request.seed is not None:
-        base_params["seed"] = request.seed
     
     # Merge stop strings from config and request
     stop_strings = list(ensemble_config.stop_strings)  # Start with config defaults

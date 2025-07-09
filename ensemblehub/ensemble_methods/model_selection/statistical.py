@@ -191,7 +191,7 @@ class AllModelsSelector(StatisticalSelector):
         """
         Return all provided models.
         """
-        logger.info(f"Selecting all {len(model_specs)} models")
+        # logger.info(f"Selecting all {len(model_specs)} models")
         return model_specs
 
 
