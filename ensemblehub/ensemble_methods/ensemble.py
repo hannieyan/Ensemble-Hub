@@ -208,19 +208,15 @@ class EnsembleFramework:
         # Get model attribution data if available
         attribution_data = None
         if hasattr(self.output_aggregator, 'get_attribution_data'):
-            try:
-                attribution_data = self.output_aggregator.get_attribution_data()
-                if attribution_data:
-                    logger.debug(f"Retrieved attribution data with keys: {list(attribution_data.keys())}")
-            except Exception as e:
-                logger.warning(f"Failed to get attribution data: {e}")
+            attribution_data = self.output_aggregator.get_attribution_data()
+            # logger.debug(f"Retrieved attribution data with keys: {list(attribution_data.keys())}")
         
         # Create results for each example
         selected_paths = [s['path'] for s in selected_specs]
         method_name = f"{self.config.model_selection_method}+{self.config.output_aggregation_method}"
         
         results = []
-        for output in outputs:
+        for i, output in enumerate(outputs):
             result = {
                 "output": output,
                 "selected_models": selected_paths,
@@ -232,16 +228,13 @@ class EnsembleFramework:
             }
             
             # Add attribution data if available
-            if attribution_data:
-                result["attribution"] = attribution_data
-                logger.debug(f"Added attribution data to result")
+            if attribution_data and i < len(attribution_data):
+                result["attribution"] = attribution_data[i]
+                logger.debug(f"Added attribution data to result {i}")
             
             results.append(result)
             
         return results
-
-
-
 
 
 

@@ -118,9 +118,8 @@ class HFGenerator:
 
         # Auto-detect format: if input has "prompt" field, it's text completion
         if not is_chat:
-            print(inputs[0])
             # Text completion mode - use raw prompt without template
-            logger.info(f"  Raw prompt: {inputs[0]}")
+            # logger.info(f"  Raw prompt: {inputs[0]}")
             ids = self.tokenizer(
                 inputs,
                 return_tensors="pt",
@@ -128,8 +127,6 @@ class HFGenerator:
                 padding_side='left',
             ).to(self.device)
         else:
-
-            print("is_chat", inputs[0])
             # Chat completion mode - use apply_chat_template
             # logger.info(f"  Messages: {inputs[0]}")
             # Check if tokenizer supports enable_thinking

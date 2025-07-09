@@ -107,8 +107,8 @@ class ProgressiveSelector(BaseSentenceAggregator):
         # Select the two largest models
         large_model, small_model = select_two_largest_models(generators)
         
-        # Clear attribution at the start of each request (new POST)
-        self.attribution = ModelAttribution()
+        # Create separate attribution for each example in the batch
+        attributions = [ModelAttribution() for _ in examples]
 
         # Get model names for attribution
         large_model_name = ray.get(large_model.get_model_name.remote())
@@ -121,11 +121,11 @@ class ProgressiveSelector(BaseSentenceAggregator):
         final_convs = []
         
         # Stage 1: Batch generate outlines
-        logger.info(f"📝 Stage 1: Generating {len(examples)} outlines")
+        logger.info(f"📝 Stage 1: Generating outlines")
         outline_results = self._batch_generate(large_model, outline_convs, self.outline_max_tokens, is_chat, "outline", **kwargs)
         
         # Stage 2: Prepare and generate final answers
-        logger.info(f"🔧 Stage 2: Generating final answers")
+        logger.info(f"📝 Stage 2: Generating final answers")
         for ex, (outline_text, _), q in zip(examples, outline_results, questions):
             if outline_text:
                 conv = self._prepare_final_conversation(q, outline_text, is_chat)
@@ -136,26 +136,29 @@ class ProgressiveSelector(BaseSentenceAggregator):
         # Calculate remaining tokens for final answers
         final_max_tokens = max_tokens if max_tokens else 16384
         final_max_tokens = max(1000, final_max_tokens - self.outline_max_tokens)
+        print(f"Final max tokens for answers: {final_max_tokens}")
         
-        final_results = self._batch_generate(small_model, [c for c in final_convs if c],
-                                                   final_max_tokens, is_chat, "final", **kwargs)
+        final_results = self._batch_generate(small_model, [c for c in final_convs if c], final_max_tokens, is_chat, "final", **kwargs)
         
-        # Combine results and record attribution for all examples in this request
+        # Combine results and record attribution for each example separately
         results, j = [], 0
         for i, ((outline_text, outline_tokens), conv) in enumerate(zip(outline_results, final_convs)):
             if outline_text:
-                # Add outline segment with proper attribution (round number = example index)
-                self.attribution.add_segment(outline_text, large_model_name, outline_tokens, i)
+                # Add outline segment to this example's attribution (round 0)
+                attributions[i].add_segment(outline_text, large_model_name, outline_tokens, 0)
             
             if conv and j < len(final_results):
-                # Add final answer segment
+                # Add final answer segment to this example's attribution (round 1)
                 final_text, final_tokens = final_results[j]
-                self.attribution.add_segment(final_text, small_model_name, final_tokens, i)
+                attributions[i].add_segment(final_text, small_model_name, final_tokens, 1)
                 results.append(final_text)  # Only append final_text to results
                 j += 1
             else:
                 results.append("")  # Return empty string if no final answer
         
+        # Store batch attribution data
+        self.batch_attributions = attributions
+
         return results
     
     def _extract_question(self, example: Union[str, List[Dict]], is_chat: bool) -> str:
@@ -223,8 +226,21 @@ class ProgressiveSelector(BaseSentenceAggregator):
             token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
             results.append((text, token_count))
 
-        logger.info(f"{stage}: Generated {len(results)} outputs with total {sum(tc for _, tc in results)} tokens")
+        # logger.info(f"{stage}: Generated {len(results)} outputs with total {sum(tc for _, tc in results)} tokens")
         return results
-    
+
+
+    def get_attribution_data(self) -> List[Dict[str, Any]]:
+        """Get model attribution data for the last generation.
+        
+        Returns:
+            List of attribution data, one dict per example in the batch
+        """
+        return [{
+            "summary": attr.get_attribution_summary(),
+            "detailed": attr.get_detailed_attribution(),
+        } for attr in self.batch_attributions]
+
+
     def __repr__(self):
         return f"ProgressiveSelector(outline_tokens={self.outline_max_tokens})"

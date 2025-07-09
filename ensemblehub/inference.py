@@ -22,9 +22,23 @@ logger = logging.getLogger(__name__)
 
 
 def load_dataset_json(input_path: str) -> List[Dict[str, Any]]:
-    """Load dataset from JSON file."""
+    """Load dataset from JSON or JSONL file."""
+    dataset = []
     with open(input_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        if input_path.endswith('.jsonl'):
+            # JSONL format - one JSON object per line
+            for line in f:
+                line = line.strip()
+                if line:
+                    dataset.append(json.loads(line))
+        else:
+            # JSON format - single JSON object or array
+            data = json.load(f)
+            if isinstance(data, list):
+                dataset = data
+            else:
+                dataset = [data]
+    return dataset
 
 
 def prepare_prompt_from_example(example: Dict[str, Any]) -> str:
@@ -123,7 +137,9 @@ def process_batch(
 
 def save_results(results: List[Dict[str, Any]], output_path: str, mode: str = "a"):
     """Save results to a JSONL file."""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    dirname = os.path.dirname(output_path)
+    if dirname:  # Only create directory if it's not empty
+        os.makedirs(dirname, exist_ok=True)
     
     with open(output_path, mode, encoding="utf-8") as f:
         for result in results:

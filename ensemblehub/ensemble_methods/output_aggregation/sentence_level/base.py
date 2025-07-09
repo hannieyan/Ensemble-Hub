@@ -106,13 +106,15 @@ class BaseSentenceAggregator(ABC):
         """
         pass
     
-    def get_attribution_data(self) -> Dict[str, Any]:
-        """Get model attribution data for the last generation."""
-        return {
-            "summary": self.attribution.get_attribution_summary(),
-            "detailed": self.attribution.get_detailed_attribution(),
-            # "formatted_text": self.attribution.format_text_with_attribution()
-        }
+    def get_attribution_data(self) -> List[Dict[str, Any]]:
+        """Get model attribution data for the last generation.
+        
+        Returns:
+            List of attribution data, one dict per example in the batch.
+            Default implementation returns empty list since most aggregators
+            don't track per-example attribution.
+        """
+        return []
     
     def __repr__(self):
         return f"{self.__class__.__name__}(name='{self.name}')"
