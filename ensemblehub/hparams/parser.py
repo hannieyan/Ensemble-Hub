@@ -50,6 +50,11 @@ def _parse_args(parser: HfArgumentParser, args: Optional[Union[Dict[str, Any], l
         # Flatten nested config for HfArgumentParser
         flat_args = {}
         
+        # Extract server configuration
+        server_section = args.get('server', {})
+        flat_args['api_host'] = server_section.get('host', '0.0.0.0')
+        flat_args['api_port'] = server_section.get('port', 8000)
+        
         # Extract ensemble section
         ensemble_section = args.get('ensemble', {})
         flat_args['max_rounds'] = ensemble_section.get('max_rounds', 500)

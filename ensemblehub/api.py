@@ -64,9 +64,9 @@ def run_api() -> None:
     # Create FastAPI app
     app = create_app(ensemble_config, ensemble_framework)
     
-    # Get server configuration from environment variables
-    api_host = os.getenv("API_HOST", "0.0.0.0")
-    api_port = int(os.getenv("API_PORT", "8000"))
+    # Get server configuration from parsed arguments
+    api_host = ensemble_args.api_host
+    api_port = ensemble_args.api_port
     
     # Log startup information
     logger.info("Starting Ensemble-Hub API")

@@ -39,3 +39,14 @@ class EnsembleArguments:
         default=False,
         metadata={"help": "Save results to saves/logs directory for debugging and analysis."}
     )
+    
+    # Server Configuration
+    api_host: str = field(
+        default="0.0.0.0",
+        metadata={"help": "API server host address."}
+    )
+    
+    api_port: int = field(
+        default=8000,
+        metadata={"help": "API server port number."}
+    )
