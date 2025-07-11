@@ -8,11 +8,13 @@ from .reward_based import RewardBasedSelector
 from .random_selector import RandomSentenceSelector
 from .loop_selector import LoopSelector
 from .progressive_selector import ProgressiveSelector
+from .switch import Switch
 
 __all__ = [
     "BaseSentenceAggregator",
     "RewardBasedSelector",
     "RandomSentenceSelector",
     "LoopSelector",
-    "ProgressiveSelector"
+    "ProgressiveSelector",
+    "Switch",
 ]

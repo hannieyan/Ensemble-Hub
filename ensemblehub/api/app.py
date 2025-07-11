@@ -115,6 +115,8 @@ def process_conversations(
     
     # Override with request parameters (only those explicitly set by user)
     request_dict = request.model_dump(exclude_unset=True)
+    # Remove 'model' field as it's not relevant for ensemble
+    request_dict.pop('model', None)
     base_params.update(request_dict)
 
     # Debug logging

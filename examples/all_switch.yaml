@@ -1,0 +1,95 @@
+# Ensemble-Hub API Configuration
+# This file contains all configuration parameters for the API server
+
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Debug Settings
+debug:
+  show_input_details: false  # Show raw HTTP request body in logs
+  show_output_details: true  # Show detailed output results in logs
+  enable_thinking: false  # Enable thinking mode for models that support it
+  save_results: false  # Save results to disk (useful for debugging)
+
+# Model Specifications
+# Format: path, engine (hf/vllm/hf_rm/hf_gen/api), and optional parameters
+# Note: For HF models, device is controlled via max_memory parameter
+model_specs:
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+    engine: "hf"
+    # max_memory: null  # null means auto device allocation
+    # quantization: "none"  # Options: none, 8bit, 4bit
+    enable_thinking: false
+    # num_gpus: 1.0  # GPU resources to allocate (0.5 for shared GPU, 1.0 for full GPU, 2 or more for large models)
+  
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+    engine: "hf"
+    # max_memory: {"0": "10GB", "cpu": "20GB"}  # Example: specific memory allocation
+    # num_gpus: 0.5  # Use half GPU for smaller models
+    enable_thinking: false
+  
+  # Additional model examples (uncomment to use):
+  # - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+  #   engine: "hf"
+  #   quantization: "4bit"
+  #   max_memory: {"0": "4GB", "1": "4GB"}  # Multi-GPU example
+  #   num_gpus: 0.5  # Smaller models can share GPU resources
+  
+  # - path: "Qwen/Qwen2.5-Math-7B-Instruct"
+  #   engine: "vllm"
+  #   device: "cuda:1"  # vLLM still uses device parameter
+
+# Default Ensemble Configuration
+ensemble:
+  # Model Selection Method
+  # Options: all, zscore, model_judgment, random
+  model_selection_method: "all"
+  model_selection_params: {}
+  
+  # Output Aggregation Method
+  # Options: loop, progressive, random, reward_based
+  output_aggregation_method: "switch"
+  output_aggregation_params:
+    switch_after_tokens: 50  # Maximum tokens for outline generation
+  
+  # Default generation parameters (can be overridden by API request)
+  generation:
+    max_tokens: 256  # Total output length (must be larger than outline_max_tokens)
+    temperature: 1.0
+    top_p: 1.0
+    presence_penalty: 0.0
+    frequency_penalty: 0.0
+    stop_strings: []
+
+# Engine-specific Options
+engine_options:
+  # vLLM Options
+  vllm:
+    enforce_eager: false  # Disable CUDA graphs (fixes memory allocation errors)
+    disable_chunked_prefill: false  # Disable chunked prefill (fixes conflicts)
+    max_model_len: 32768  # Maximum model length
+    gpu_memory_utilization: 0.8
+    disable_sliding_window: false  # Disable sliding window attention
+  
+  # HuggingFace Options
+  hf:
+    use_eager_attention: true  # Use eager attention implementation (fixes meta tensor errors)
+    disable_device_map: false  # Disable device_map for specific device assignment
+    use_8bit: false  # Global 8-bit quantization setting
+    use_4bit: false  # Global 4-bit quantization setting
+    low_cpu_mem: true  # Use low CPU memory loading
+
+# Model Statistics Configuration (for zscore selection)
+model_stats:
+  # Path to model statistics file or inline statistics
+  # stats_file: "path/to/model_stats.json"
+  # Or provide inline:
+  # stats:
+  #   "Qwen/Qwen2.5-1.5B-Instruct":
+  #     hendrycks_math:
+  #       mean_perplexity: 3.5
+  #       std_perplexity: 1.2
+  #       mean_confidence: 0.7
+  #       std_confidence: 0.15

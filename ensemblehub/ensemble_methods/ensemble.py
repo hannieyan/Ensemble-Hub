@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from .model_selection.learned import MetaLearningSelector
 # Model Selection imports
 from .model_selection.statistical import ZScoreSelector, AllModelsSelector, JudgmentSelector
+from .output_aggregation.sentence_level.switch import Switch
 from .output_aggregation.sentence_level.progressive_selector import ProgressiveSelector
 from .output_aggregation.sentence_level.random_selector import RandomSentenceSelector
 # Output Aggregation imports
@@ -84,7 +85,8 @@ class EnsembleFramework:
         "random": (RandomSentenceSelector, "sentence", ["max_repeat", "name"]),
         "loop": (LoopSelector, "sentence", ["max_repeat", "name"]),
         "progressive": (ProgressiveSelector, "sentence", ["outline_max_tokens", "outline_prompt_template", "final_prompt_template", "template_language", "name"]),
-        
+        "switch": (Switch, "sentence", ["switch_after_tokens", "name"]),
+
         # Token-level aggregators
         "gac": (GaCTokenAggregator, "token", None),
         "distribution": (DistributionAggregator, "token", None),
