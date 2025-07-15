@@ -35,6 +35,7 @@ class HFGenerator:
         dtype: torch.dtype = torch.bfloat16,
         quantization: str = "none",
         enable_thinking: bool = True,
+        padding_side: str = "left",
     ):
 
         # Memory optimization parameters
@@ -78,12 +79,17 @@ class HFGenerator:
             device_map_kwargs["skip_keys"] = model._skip_keys_device_placement
 
         # Load model to GPU
-        self.model = dispatch_model(model, **device_map_kwargs)
+        self.model = dispatch_model(model, **device_map_kwargs).eval()
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
-            padding_side="left",
+            padding_side=padding_side,
             trust_remote_code=True
         )
+        
+        # Ensure pad_token is properly set
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         self.device = next(self.model.parameters()).device
 
         self.name = model_path
@@ -113,6 +119,8 @@ class HFGenerator:
         seed: Optional[int] = 1234,
     ) -> Union[GenOutput, List[GenOutput]]:
 
+        print(inputs)
+
         # stop_strings
         stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
 
@@ -124,7 +132,6 @@ class HFGenerator:
                 inputs,
                 return_tensors="pt",
                 padding=True,
-                padding_side='left',
             ).to(self.device)
         else:
             # Chat completion mode - use apply_chat_template
@@ -134,7 +141,6 @@ class HFGenerator:
                 inputs,
                 add_generation_prompt=True,
                 padding=True,
-                padding_side='left',
                 enable_thinking=self.enable_thinking,
                 return_tensors="pt",
                 continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
@@ -176,6 +182,8 @@ class HFGenerator:
 
         # Batch decode all sequences with special tokens removed
         texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+
+        print(texts)
 
         # Determine ended status based on token count
         # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)

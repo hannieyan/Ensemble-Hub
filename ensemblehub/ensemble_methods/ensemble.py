@@ -58,7 +58,6 @@ class EnsembleConfig(BaseModel):
     # Debug options
     show_output_details: bool = Field(default=False, description="Show detailed output in logs")
     show_input_details: bool = Field(default=False, description="Show raw request in logs")
-    enable_thinking: bool = Field(default=False, description="Enable thinking mode for supported models")
     save_results: bool = Field(default=False, description="Save results to saves/logs directory")
     
     # Server configuration (not part of ensemble logic, but needed somewhere)
@@ -168,14 +167,14 @@ class EnsembleFramework:
             except ValueError:
                 # Actor doesn't exist, create new one
                 # Default GPU allocation: 0.5 for shared GPU usage, 0 for CPU-only
-                default_gpus = 1 if torch.cuda.is_available() else 0
-                actor = get_remote_hf_generator_class(spec.get("num_gpus", default_gpus))
+                actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))
                 generator = actor.options(name=spec["path"], lifetime="detached").remote(
                     model_path=spec["path"],
                     max_memory=spec.get("max_memory", None),
                     dtype=torch.bfloat16,
                     quantization=spec.get("quantization", "none"),
                     enable_thinking=spec.get("enable_thinking", False),
+                    padding_side=spec.get("padding_side", "left"),
                 )
                 logger.info(f"✅ Created new actor: {spec['path']}")
             generators[spec["path"]] = generator

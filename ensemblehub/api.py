@@ -51,7 +51,6 @@ def run_api() -> None:
         # Debug options
         show_output_details=ensemble_args.show_output_details,
         show_input_details=ensemble_args.show_input_details,
-        enable_thinking=generator_args.enable_thinking,
         save_results=ensemble_args.save_results
     )
     
@@ -75,14 +74,9 @@ def run_api() -> None:
     logger.info(f"Models: {len(ensemble_config.model_specs)}")
     logger.info(f"Max rounds: {ensemble_config.max_rounds}")
     logger.info(f"Default generation params: max_tokens={ensemble_config.max_tokens}, temperature={ensemble_config.temperature}, top_p={ensemble_config.top_p}")
-    if ensemble_config.show_output_details:
-        logger.info("Output details: Enabled")
-    if ensemble_config.show_input_details:
-        logger.info("Input details: Enabled")
-    if ensemble_config.enable_thinking:
-        logger.info("Thinking mode: Enabled")
-    if ensemble_config.save_results:
-        logger.info("💾 Result saving: Enabled (saves/logs/)")
+    logger.info(f"🖨️ Show Output: {'Enabled' if ensemble_config.show_output_details else 'Disabled'}")
+    logger.info(f"🖨️ Show Input: {'Enabled' if ensemble_config.show_input_details else 'Disabled'}")
+    logger.info(f"💾 Result saving: {'Enabled (saves/logs/)' if ensemble_config.save_results else 'Disabled'}")
     
     # Run server
     uvicorn.run(app, host=api_host, port=api_port)

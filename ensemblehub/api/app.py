@@ -94,24 +94,17 @@ def process_conversations(
     """Process conversations uniformly using ensemble"""
     ensemble_config = ensemble_framework.config
     
-    # Prepare model specs with format info
-    model_specs_with_format = []
-    for spec in ensemble_config.model_specs:
-        spec_copy = spec.copy()
-        spec_copy["enable_thinking"] = spec.get("enable_thinking", ensemble_config.enable_thinking)
-        model_specs_with_format.append(spec_copy)
-    
     # Get all config parameters as base
     config_dict = ensemble_config.model_dump()
     
     # Build base_params with all config values
     base_params = {
         k: v for k, v in config_dict.items() 
-        if k not in ["model_specs"]  # We already handled model_specs above
+        if k not in ["model_specs"]  # Use model_specs directly
     }
     
-    # Use the processed model_specs
-    base_params["model_specs"] = model_specs_with_format
+    # Use the original model_specs directly
+    base_params["model_specs"] = ensemble_config.model_specs
     
     # Override with request parameters (only those explicitly set by user)
     request_dict = request.model_dump(exclude_unset=True)
@@ -384,7 +377,6 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
                 "max_rounds": ensemble_config.max_rounds,
                 "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
                 "show_output_details": ensemble_config.show_output_details,
-                "enable_thinking": ensemble_config.enable_thinking
             }
         }
 

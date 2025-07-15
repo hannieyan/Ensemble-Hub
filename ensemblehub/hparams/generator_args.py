@@ -56,13 +56,7 @@ class GeneratorArguments:
         default=1.0,
         metadata={"help": "Exponential penalty to the length that is used with beam-based generation. length_penalty > 0.0 promotes longer sequences, while length_penalty < 0.0 encourages shorter sequences."}
     )
-    
-    # Generator configuration
-    enable_thinking: bool = field(
-        default=False,
-        metadata={"help": "Enable thinking mode for models that support it (e.g., DeepSeek-R1)."}
-    )
-    
+
     hf_use_eager_attention: bool = field(
         default=True,
         metadata={"help": "Use eager attention implementation for HuggingFace models."}
