@@ -109,7 +109,7 @@ class HFGenerator:
         self,
         inputs: List,
         is_chat,
-        *,
+        continue_final_message,
         max_tokens=256,
         temperature=0.95,
         top_p=0.7,
@@ -125,26 +125,33 @@ class HFGenerator:
         stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
 
         # Auto-detect format: if input has "prompt" field, it's text completion
-        if not is_chat:
-            # Text completion mode - use raw prompt without template
-            # logger.info(f"  Raw prompt: {inputs[0]}")
-            ids = self.tokenizer(
-                inputs,
-                return_tensors="pt",
-                padding=True,
-            ).to(self.device)
+        if is_chat:
+            chat_inputs = []
+            for text_input in inputs:
+                # Chat completion mode - use apply_chat_template
+                # logger.info(f"  Messages: {inputs[0]}")
+                # Check if tokenizer supports enable_thinking
+                print(text_input)
+                chat_input = self.tokenizer.apply_chat_template(
+                    text_input,
+                    add_generation_prompt=True if not continue_final_message else False,
+                    enable_thinking=self.enable_thinking,
+                    continue_final_message=continue_final_message,
+                    tokenize = False,
+                )
+                print("chat_inputs", chat_input)
+
+                chat_inputs.append(chat_input)
         else:
-            # Chat completion mode - use apply_chat_template
-            # logger.info(f"  Messages: {inputs[0]}")
-            # Check if tokenizer supports enable_thinking
-            ids = self.tokenizer.apply_chat_template(
-                inputs,
-                add_generation_prompt=True,
-                padding=True,
-                enable_thinking=self.enable_thinking,
-                return_tensors="pt",
-                continue_final_message=True if inputs[0][-1].get("role") == "assistant" else False
-            ).to(self.device)
+            chat_inputs = inputs
+
+        # Text completion mode - use raw prompt without template
+        # logger.info(f"  Raw prompt: {inputs[0]}")
+        ids = self.tokenizer(
+            chat_inputs,
+            return_tensors="pt",
+            padding=True,
+        ).to(self.device)
 
         # Set seed for reproducibility if provided
         torch.manual_seed(seed)
@@ -182,8 +189,6 @@ class HFGenerator:
 
         # Batch decode all sequences with special tokens removed
         texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-
-        print(texts)
 
         # Determine ended status based on token count
         # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)

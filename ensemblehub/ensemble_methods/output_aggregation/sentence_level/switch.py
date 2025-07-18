@@ -86,67 +86,46 @@ class Switch(BaseSentenceAggregator):
         logger.info(f"📝 Stage 1: Generating with large model")
         logger.info(f"  Initial generation tokens: {self.switch_after_tokens}")
         
-        first_results = self._batch_generate(large_model, examples, self.switch_after_tokens, is_chat, **kwargs)
+        # Convert text prompts to chat format for first stage
+        first_stage_examples = []
+        for ex in examples:
+            first_stage_examples.append([
+                {"role": "user", "content": ex}
+            ])
+        
+        first_results = self._batch_generate(large_model, first_stage_examples, self.switch_after_tokens, is_chat=True, continue_final_message=False, **kwargs)
         
         # Stage 2: Continue generation with small model
         logger.info(f"📝 Stage 2: Switching to small model for continuation")
         
-        # Prepare continuations
-        continued_examples = [self._prepare_continuation(ex, first_text, is_chat) if first_text else None 
-                             for ex, (first_text, _) in zip(examples, first_results)]
+        # Prepare continuations - create chat format with assistant message for continuation
+        continued_examples = []
+        for ex, (first_text, _) in zip(examples, first_results):
+            continued_examples.append([
+                {"role": "user", "content": ex},
+                {"role": "assistant", "content": first_text}
+            ])
         
         # Calculate remaining tokens
         remaining_tokens = max_tokens - self.switch_after_tokens
         logger.info(f"  Remaining tokens for continuation: {remaining_tokens}")
         
-        # Generate continuations with small model
-        valid_continuations = [(i, ex) for i, ex in enumerate(continued_examples) if ex is not None]
-        continuation_map = {}
-        
-        if valid_continuations:
-            valid_indices, valid_examples = zip(*valid_continuations)
-            continuation_results = self._batch_generate(small_model, valid_examples, remaining_tokens, is_chat, **kwargs)
-            continuation_map = {idx: result for idx, result in zip(valid_indices, continuation_results)}
+        # Generate continuations with small model using chat format
+        continuation_results = self._batch_generate(small_model, continued_examples, remaining_tokens, is_chat=True, continue_final_message=True, **kwargs)
         
         # Combine results and record attribution
         results = []
-        for i, (first_text, first_tokens) in enumerate(first_results):
-            if first_text:
-                attributions[i].add_segment(first_text, large_model_name, first_tokens, 0)
-                
-                if i in continuation_map:
-                    continuation_text, continuation_tokens = continuation_map[i]
-                    attributions[i].add_segment(continuation_text, small_model_name, continuation_tokens, 1)
-                    results.append(first_text + continuation_text)
-                else:
-                    results.append(first_text)
-            else:
-                results.append("")
+        for i, ((first_text, first_tokens), (continuation_text, continuation_tokens)) in enumerate(
+            zip(first_results, continuation_results)
+        ):
+            attributions[i].add_segment(first_text, large_model_name, first_tokens, 0)
+            attributions[i].add_segment(continuation_text, small_model_name, continuation_tokens, 1)
+            results.append(first_text + continuation_text)
         
         # Store batch attribution data
         self.batch_attributions = attributions
 
         return results
-    
-    def _prepare_continuation(self, example: Union[str, List[Dict]], generated_text: str, is_chat: bool) -> Union[str, List[Dict]]:
-        """Prepare continuation by appending generated text to the conversation."""
-        if not is_chat:
-            # For text completion, just concatenate
-            return str(example) + generated_text
-        
-        if isinstance(example, list):
-            # For chat mode, add the generated text as an assistant message
-            # and keep the conversation going
-            conv = example.copy()
-            conv.append({"role": "assistant", "content": generated_text})
-            # The model will continue from where it left off
-            return conv
-        
-        # Fallback: treat as single user message
-        return [
-            {"role": "user", "content": str(example)},
-            {"role": "assistant", "content": generated_text}
-        ]
     
     def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, **kwargs) -> List[Tuple[str, int]]:
         """Batch generate with model and return text with token counts.
@@ -157,34 +136,24 @@ class Switch(BaseSentenceAggregator):
         if not conversations:
             return []
         
-        # Filter out None values
-        valid_conversations = [c for c in conversations if c is not None]
-        if not valid_conversations:
-            return []
-        
         gen_kwargs = {
             "max_tokens": max_tokens,
             "temperature": kwargs.get("temperature", 0.7),
             "top_p": kwargs.get("top_p", 0.9),
             "is_chat": is_chat,
+            "continue_final_message": kwargs.get("continue_final_message", False),
             "seed": kwargs.get("seed", 1234),
             "stop_strings": kwargs.get("stop_strings", None),
         }
 
-        outputs = ray.get(model.generate.remote(valid_conversations, **gen_kwargs))
+        outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
         tokenizer = ray.get(model.get_tokenizer.remote())
 
         results = []
-        conv_idx = 0
-        for conv in conversations:
-            if conv is None:
-                results.append(("", 0))
-            else:
-                output = outputs[conv_idx]
-                text = output.text if hasattr(output, 'text') else str(output)
-                token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
-                results.append((text, token_count))
-                conv_idx += 1
+        for output in outputs:
+            text = output.text if hasattr(output, 'text') else str(output)
+            token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            results.append((text, token_count))
 
         return results
 
