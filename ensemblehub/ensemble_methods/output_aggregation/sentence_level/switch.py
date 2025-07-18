@@ -106,12 +106,35 @@ class Switch(BaseSentenceAggregator):
                 {"role": "assistant", "content": first_text}
             ])
         
+        # Apply chat template to convert chat format to text
+        text_inputs = ray.get(small_model.apply_chat_template.remote(
+            continued_examples,
+            add_generation_prompt=True,
+            enable_thinking=True,
+            continue_final_message=False,
+            tokenize=False,
+        ))
+        
+        # Remove the special tokens that are added at the end when continue_final_message=False
+        # These tokens include <｜end▁of▁sentence｜><｜Assistant｜><think>
+        special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
+        cleaned_text_inputs = []
+        for text in text_inputs:
+            cleaned_text = text
+            # Check if the text ends with any of the special tokens and remove from the end
+            for token in special_tokens_to_remove:
+                if cleaned_text.endswith(token):
+                    cleaned_text = cleaned_text[:-len(token)]
+                    break  # Only remove the first match to avoid over-removing
+            cleaned_text_inputs.append(cleaned_text)
+        text_inputs = cleaned_text_inputs
+        
         # Calculate remaining tokens
         remaining_tokens = max_tokens - self.switch_after_tokens
         logger.info(f"  Remaining tokens for continuation: {remaining_tokens}")
-        
-        # Generate continuations with small model using chat format
-        continuation_results = self._batch_generate(small_model, continued_examples, remaining_tokens, is_chat=True, continue_final_message=True, **kwargs)
+
+        # Generate continuations with small model using text completion mode
+        continuation_results = self._batch_generate(small_model, text_inputs, remaining_tokens, is_chat=False, **kwargs)
         
         # Combine results and record attribution
         results = []

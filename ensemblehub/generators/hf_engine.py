@@ -119,7 +119,7 @@ class HFGenerator:
         seed: Optional[int] = 1234,
     ) -> Union[GenOutput, List[GenOutput]]:
 
-        print(inputs)
+        # print(inputs)
 
         # stop_strings
         stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
@@ -131,7 +131,6 @@ class HFGenerator:
                 # Chat completion mode - use apply_chat_template
                 # logger.info(f"  Messages: {inputs[0]}")
                 # Check if tokenizer supports enable_thinking
-                print(text_input)
                 chat_input = self.tokenizer.apply_chat_template(
                     text_input,
                     add_generation_prompt=True if not continue_final_message else False,
@@ -139,7 +138,6 @@ class HFGenerator:
                     continue_final_message=continue_final_message,
                     tokenize = False,
                 )
-                print("chat_inputs", chat_input)
 
                 chat_inputs.append(chat_input)
         else:
@@ -196,6 +194,29 @@ class HFGenerator:
         ended_status = [count < max_tokens - 1 for count in token_counts]
 
         return [GenOutput(txt, ended) for txt, ended in zip(texts, ended_status)]
+
+
+    def apply_chat_template(self,
+        conversation: List[List[dict]],
+        add_generation_prompt: bool = True,
+        enable_thinking: bool = True,
+        continue_final_message: bool = False,
+        tokenize: bool = True,
+    ) -> List[str]:
+        """Apply chat template to a conversation."""
+        chat_texts = []
+        for conversation in conversation:
+            chat_text = self.tokenizer.apply_chat_template(
+                conversation,
+                add_generation_prompt=add_generation_prompt,
+                enable_thinking=enable_thinking,
+                continue_final_message=continue_final_message,
+                tokenize=tokenize,
+            )
+            chat_texts.append(chat_text)
+
+        return chat_texts
+
 
 
     def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:

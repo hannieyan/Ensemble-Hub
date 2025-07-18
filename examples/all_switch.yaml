@@ -70,7 +70,7 @@ engine_options:
 
   # HuggingFace Options
   hf:
-    use_eager_attention: true  # Use eager attention implementation (fixes meta tensor errors)
+    use_eager_attention: false  # Use eager attention implementation (fixes meta tensor errors)
     disable_device_map: false  # Disable device_map for specific device assignment
     use_8bit: false  # Global 8-bit quantization setting
     use_4bit: false  # Global 4-bit quantization setting
