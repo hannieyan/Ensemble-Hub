@@ -94,67 +94,96 @@ class Switch(BaseSentenceAggregator):
             ])
         
         first_results = self._batch_generate(large_model, first_stage_examples, self.switch_after_tokens, is_chat=True, continue_final_message=False, **kwargs)
-        
-        # Stage 2: Continue generation with small model
-        logger.info(f"📝 Stage 2: Switching to small model for continuation")
-        
-        # Prepare continuations - create chat format with assistant message for continuation
-        continued_examples = []
-        for ex, (first_text, _) in zip(examples, first_results):
-            continued_examples.append([
-                {"role": "user", "content": ex},
-                {"role": "assistant", "content": first_text}
-            ])
-        
-        # Apply chat template to convert chat format to text
-        text_inputs = ray.get(small_model.apply_chat_template.remote(
-            continued_examples,
-            add_generation_prompt=True,
-            enable_thinking=True,
-            continue_final_message=False,
-            tokenize=False,
-        ))
-        
-        # Remove the special tokens that are added at the end when continue_final_message=False
-        # These tokens include <｜end▁of▁sentence｜><｜Assistant｜><think>
-        special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
-        cleaned_text_inputs = []
-        for text in text_inputs:
-            cleaned_text = text
-            # Check if the text ends with any of the special tokens and remove from the end
-            for token in special_tokens_to_remove:
-                if cleaned_text.endswith(token):
-                    cleaned_text = cleaned_text[:-len(token)]
-                    break  # Only remove the first match to avoid over-removing
-            cleaned_text_inputs.append(cleaned_text)
-        text_inputs = cleaned_text_inputs
-        
-        # Calculate remaining tokens
-        remaining_tokens = max_tokens - self.switch_after_tokens
-        logger.info(f"  Remaining tokens for continuation: {remaining_tokens}")
 
-        # Generate continuations with small model using text completion mode
-        continuation_results = self._batch_generate(small_model, text_inputs, remaining_tokens, is_chat=False, **kwargs)
+        print(first_results)
+        # Filter out completed samples for Stage 2
+        incomplete_indices = []
+        continued_examples = []
+        for i, (ex, (first_text, _, ended)) in enumerate(zip(examples, first_results)):
+            if not ended:
+                incomplete_indices.append(i)
+                continued_examples.append([
+                    {"role": "user", "content": ex},
+                    {"role": "assistant", "content": "<think>" + first_text}
+                ])
+        
+        # Only proceed with Stage 2 if there are incomplete samples
+        continuation_results = []
+        if continued_examples:
+            logger.info(f"📝 Stage 2: Switching to small model for continuation ({len(continued_examples)}/{len(examples)} samples)")
+            
+            # Apply chat template to convert chat format to text
+            text_inputs = ray.get(small_model.apply_chat_template.remote(
+                continued_examples,
+                add_generation_prompt=True,
+                enable_thinking=True,
+                continue_final_message=False,
+                tokenize=False,
+            ))
+        
+            
+            # Remove the special tokens that are added at the end when continue_final_message=False
+            # These tokens include <｜end▁of▁sentence｜><｜Assistant｜><think>
+            special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>\n", "<｜end▁of▁sentence｜><｜Assistant｜>\n"]
+            cleaned_text_inputs = []
+            for text in text_inputs:
+                cleaned_text = text
+                # Check if the text ends with any of the special tokens and remove from the end
+                for token in special_tokens_to_remove:
+                    if cleaned_text.endswith(token):
+                        cleaned_text = cleaned_text[:-len(token)]
+                        break  # Only remove the first match to avoid over-removing
+                cleaned_text_inputs.append(cleaned_text)
+            text_inputs = cleaned_text_inputs
+            
+            # Calculate remaining tokens
+            remaining_tokens = max_tokens - self.switch_after_tokens
+            logger.info(f"  Remaining tokens for continuation: {remaining_tokens}")
+
+            print(text_inputs)
+
+            # Generate continuations with small model using text completion mode
+            continuation_results = self._batch_generate(small_model, text_inputs, remaining_tokens, is_chat=False, **kwargs)
+        else:
+            logger.info(f"📝 Stage 2: Skipping continuation - all samples completed in Stage 1")
+            continuation_results = []
         
         # Combine results and record attribution
         results = []
-        for i, ((first_text, first_tokens), (continuation_text, continuation_tokens)) in enumerate(
-            zip(first_results, continuation_results)
-        ):
+        
+        # Create a mapping from original indices to continuation results
+        continuation_map = {}
+        for idx, incomplete_idx in enumerate(incomplete_indices):
+            if idx < len(continuation_results):
+                continuation_map[incomplete_idx] = continuation_results[idx]
+        
+        for i, (first_text, first_tokens, ended) in enumerate(first_results):
             attributions[i].add_segment(first_text, large_model_name, first_tokens, 0)
-            attributions[i].add_segment(continuation_text, small_model_name, continuation_tokens, 1)
-            results.append(first_text + continuation_text)
+            
+            if ended or i not in incomplete_indices:
+                # Sample completed in Stage 1, use only first result
+                results.append(first_text)
+            else:
+                # Sample needs continuation from Stage 2
+                if i in continuation_map:
+                    continuation_text, continuation_tokens, _ = continuation_map[i]
+                    attributions[i].add_segment(continuation_text, small_model_name, continuation_tokens, 1)
+                    results.append(first_text + continuation_text)
+                else:
+                    # Fallback: continuation not available, use first result only
+                    logger.warning(f"Continuation not found for sample {i}, using first result only")
+                    results.append(first_text)
         
         # Store batch attribution data
         self.batch_attributions = attributions
 
         return results
     
-    def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, **kwargs) -> List[Tuple[str, int]]:
-        """Batch generate with model and return text with token counts.
+    def _batch_generate(self, model, conversations: List, max_tokens: int, is_chat: bool, **kwargs) -> List[Tuple[str, int, bool]]:
+        """Batch generate with model and return text with token counts and ended status.
         
         Returns:
-            List of tuples (text, token_count) for each generated output
+            List of tuples (text, token_count, ended) for each generated output
         """
         if not conversations:
             return []
@@ -175,8 +204,9 @@ class Switch(BaseSentenceAggregator):
         results = []
         for output in outputs:
             text = output.text if hasattr(output, 'text') else str(output)
+            ended = output.ended_with_eos if hasattr(output, 'ended_with_eos') else False
             token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
-            results.append((text, token_count))
+            results.append((text, token_count, ended))
 
         return results
 

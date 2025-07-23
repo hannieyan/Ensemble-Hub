@@ -42,6 +42,19 @@
 | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B | prealgebra | 90.59% | 871 | 1926.8 | 5753.2 |
 | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B | precalc | 77.66% | 546 | 3835.2 | 10040.9 |
 
+## Combined Results (Accuracy % & Avg Tokens)
+
+| Model | Metric | algebra | counting | geometry | intermediate | num | prealgebra | precalc |
+|-------|--------|---------|----------|----------|--------------|-----|------------|---------|
+| **DeepSeek-R1-Distill-Qwen-1.5B** | Accuracy | 84.33 | 53.38 | 56.16 | 52.60 | 59.44 | 74.86 | 53.48 |
+| **DeepSeek-R1-Distill-Qwen-1.5B** | Avg Tokens | 2782.3 | 4839.9 | 4757.5 | 5105.7 | 4657.3 | 3124.4 | 4943.3 |
+| **DeepSeek-R1-Distill-Qwen-7B** | Accuracy | 95.20 | 81.22 | 75.99 | 76.19 | 82.04 | 90.59 | 77.66 |
+| **DeepSeek-R1-Distill-Qwen-7B** | Avg Tokens | 2067.1 | 3348.7 | 3628.3 | 4153.3 | 3432.0 | 1926.8 | 3835.2 |
+| **DeepSeek-R1-Distill-Qwen-14B** | Accuracy | 95.79 | 83.97 | 80.17 | 80.07 | 87.41 | 91.50 | 80.22 |
+| **DeepSeek-R1-Distill-Qwen-14B** | Avg Tokens | 1893.6 | 2971.4 | 3356.9 | 3958.0 | 3041.7 | 1708.6 | 3683.6 |
+| **DeepSeek-R1-Distill-Qwen-32B** | Accuracy | 96.63 | 88.19 | 81.42 | 81.51 | 89.07 | 92.31 | 81.14 |
+| **DeepSeek-R1-Distill-Qwen-32B** | Avg Tokens | 1834.3 | 2758.5 | 3499.5 | 3821.7 | 2816.7 | 1604.4 | 3610.2 |
+
 ## Notes
 - **Accuracy**: Percentage of correct answers based on boxed content matching
 - **Avg Tokens**: Average number of tokens per response
