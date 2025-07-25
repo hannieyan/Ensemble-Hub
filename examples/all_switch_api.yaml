@@ -1,0 +1,74 @@
+# Ensemble-Hub API Configuration
+# This file contains all configuration parameters for the API server
+
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Debug Settings
+debug:
+  show_input_details: false  # Show raw HTTP request body in logs
+  show_output_details: false  # Show detailed output results in logs
+  save_results: false  # Save results to disk (useful for debugging)
+
+# Model Specifications
+# Format: path, engine (hf/vllm/hf_rm/hf_gen/api), and optional parameters
+# Note: For API models, path format is "model_name:base_url:api_key"
+# The api_key should be set as environment variable AIHUBMIX_API_KEY
+model_specs:
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+    engine: "api"
+    enable_thinking: false
+  
+  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+    engine: "api"
+    enable_thinking: false
+  
+  # Additional model examples (uncomment to use):
+  # - path: "gpt-3.5-turbo:https://aihubmix.com/v1:$AIHUBMIX_API_KEY"
+  #   engine: "api"
+  #   enable_thinking: false
+  
+  # - path: "gpt-4:https://aihubmix.com/v1:$AIHUBMIX_API_KEY"
+  #   engine: "api"
+  #   enable_thinking: false
+
+# Default Ensemble Configuration
+ensemble:
+  # Model Selection Method
+  # Options: all, zscore, model_judgment, random
+  model_selection_method: "all"
+  model_selection_params: {}
+  
+  # Output Aggregation Method
+  # Options: loop, progressive, random, reward_based
+  output_aggregation_method: "switch"
+  output_aggregation_params:
+    switch_after_tokens: 100  # Maximum tokens for outline generation
+  
+  # Default generation parameters (can be overridden by API request)
+  generation:
+    max_tokens: 8192  # Total output length (must be larger than outline_max_tokens)
+    temperature: 0.0
+    do_sample: false  # Enable sampling for more diverse outputs
+    top_p: 1.0
+    presence_penalty: 0.0
+    frequency_penalty: 0.0
+    stop_strings: []
+
+# Engine-specific Options
+engine_options:
+
+  # API Options
+  api:
+    timeout: 60  # Request timeout in seconds
+    max_retries: 3  # Maximum retry attempts
+    
+  # HuggingFace Options (kept for reference)
+  hf:
+    use_eager_attention: false  # Use eager attention implementation (fixes meta tensor errors)
+    disable_device_map: false  # Disable device_map for specific device assignment
+    use_8bit: false  # Global 8-bit quantization setting
+    use_4bit: false  # Global 4-bit quantization setting
+    low_cpu_mem: false  # Use low CPU memory loading
