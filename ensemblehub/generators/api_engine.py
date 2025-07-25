@@ -81,14 +81,7 @@ class APIGenerator:
         if is_chat:
             # Chat completion mode
             messages = input_data
-            
-            # Handle continue_final_message for chat
-            if continue_final_message and messages and messages[-1]["role"] == "assistant":
-                # Extract the partial assistant message
-                partial_content = messages[-1]["content"]
-                messages = messages[:-1]  # Remove the partial message
-                prepend_text = partial_content
-            
+
             # Chat completion API parameters
             api_params = {
                 "model": self.model_name,
@@ -142,11 +135,9 @@ class APIGenerator:
             
             completion = client.completions.create(**api_params)
             response_text = completion.choices[0].text
-        
-        # Add prepend text if any
-        if prepend_text:
-            response_text = prepend_text + response_text
-        
+
+        print(response_text)
+
         # Check if response was truncated
         finish_reason = completion.choices[0].finish_reason
         ended = finish_reason == "stop"
