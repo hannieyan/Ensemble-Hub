@@ -76,8 +76,6 @@ class APIGenerator:
         
         logger.debug(f"Processing input (is_chat={is_chat}): {input_data}")
         
-        prepend_text = ""
-        
         if is_chat:
             # Chat completion mode
             messages = input_data
@@ -136,7 +134,6 @@ class APIGenerator:
             completion = client.completions.create(**api_params)
             response_text = completion.choices[0].text
 
-        print(response_text)
 
         # Check if response was truncated
         finish_reason = completion.choices[0].finish_reason
