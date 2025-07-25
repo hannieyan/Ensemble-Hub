@@ -31,6 +31,7 @@ from .output_aggregation.sentence_level.loop_selector import LoopSelector
 from .output_aggregation.token_level.distribution import DistributionAggregator, WeightedAverageAggregator
 from .output_aggregation.token_level.gac import GaCTokenAggregator
 from ..generators.hf_engine import get_remote_hf_generator_class
+from ..generators.api_engine import get_remote_api_generator_class
 
 logger = logging.getLogger(__name__)
 
@@ -166,17 +167,34 @@ class EnsembleFramework:
                 logger.info(f"✅ Reusing existing actor: {spec['path']}")
             except ValueError:
                 # Actor doesn't exist, create new one
-                # Default GPU allocation: 0.5 for shared GPU usage, 0 for CPU-only
-                actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))
-                generator = actor.options(name=spec["path"], lifetime="detached").remote(
-                    model_path=spec["path"],
-                    max_memory=spec.get("max_memory", None),
-                    dtype=torch.bfloat16,
-                    quantization=spec.get("quantization", "none"),
-                    enable_thinking=spec.get("enable_thinking", False),
-                    padding_side=spec.get("padding_side", "left"),
-                )
-                logger.info(f"✅ Created new actor: {spec['path']}")
+                engine = spec.get("engine", "hf")  # Default to hf engine
+                
+                if engine == "api":
+                    # Use API generator (no GPU needed)
+                    actor = get_remote_api_generator_class(0)
+                    generator = actor.options(name=spec["path"], lifetime="detached").remote(
+                        model_path=spec["path"],
+                        max_memory=spec.get("max_memory", None),
+                        dtype=None,  # Not used for API
+                        quantization=spec.get("quantization", "none"),
+                        enable_thinking=spec.get("enable_thinking", False),
+                        padding_side=spec.get("padding_side", "left"),
+                    )
+                elif engine == "hf":
+                    # Use HF generator
+                    actor = get_remote_hf_generator_class(spec.get("num_gpus", 1 if torch.cuda.is_available() else 0))
+                    generator = actor.options(name=spec["path"], lifetime="detached").remote(
+                        model_path=spec["path"],
+                        max_memory=spec.get("max_memory", None),
+                        dtype=torch.bfloat16,
+                        quantization=spec.get("quantization", "none"),
+                        enable_thinking=spec.get("enable_thinking", False),
+                        padding_side=spec.get("padding_side", "left"),
+                    )
+                else:
+                    raise ValueError(f"Unsupported engine type: {engine}. Supported: 'hf', 'api'")
+                
+                logger.info(f"✅ Created new {engine} actor: {spec['path']}")
             generators[spec["path"]] = generator
 
         # Model selection stage

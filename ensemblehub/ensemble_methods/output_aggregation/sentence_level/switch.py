@@ -94,17 +94,23 @@ class Switch(BaseSentenceAggregator):
             ])
         
         first_results = self._batch_generate(large_model, first_stage_examples, self.switch_after_tokens, is_chat=True, continue_final_message=False, **kwargs)
-        
+
         # Stage 2: Continue generation with small model
         logger.info(f"📝 Stage 2: Switching to small model for continuation")
         
         # Prepare continuations - create chat format with assistant message for continuation
         continued_examples = []
+        
         for ex, (first_text, _) in zip(examples, first_results):
+            # For HF models: use standard chat format
             continued_examples.append([
                 {"role": "user", "content": ex},
                 {"role": "assistant", "content": first_text}
             ])
+            # # For API models: prepend the first_text to the user content
+            # api_continued_examples.append([
+            #     {"role": "user", "content": ex + "(please continue thinking and end with think token)" + first_text}
+            # ])
         
         # Apply chat template to convert chat format to text
         text_inputs = ray.get(small_model.apply_chat_template.remote(
@@ -115,25 +121,30 @@ class Switch(BaseSentenceAggregator):
             tokenize=False,
         ))
         
-        # Remove the special tokens that are added at the end when continue_final_message=False
-        # These tokens include <｜end▁of▁sentence｜><｜Assistant｜><think>
-        special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
-        cleaned_text_inputs = []
-        for text in text_inputs:
-            cleaned_text = text
-            # Check if the text ends with any of the special tokens and remove from the end
-            for token in special_tokens_to_remove:
-                if cleaned_text.endswith(token):
-                    cleaned_text = cleaned_text[:-len(token)]
-                    break  # Only remove the first match to avoid over-removing
-            cleaned_text_inputs.append(cleaned_text)
-        text_inputs = cleaned_text_inputs
+        # For API models, apply_chat_template returns the original conversation
+        # We need to use the conversation directly for API generation
+        if isinstance(text_inputs[0], list):
+            # API model case - use api_continued_examples with prepended text
+            text_inputs = continued_examples
+        else:
+            # HF model case - clean special tokens and use text mode
+            special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
+            cleaned_text_inputs = []
+            for text in text_inputs:
+                cleaned_text = text
+                # Check if the text ends with any of the special tokens and remove from the end
+                for token in special_tokens_to_remove:
+                    if cleaned_text.endswith(token):
+                        cleaned_text = cleaned_text[:-len(token)]
+                        break  # Only remove the first match to avoid over-removing
+                cleaned_text_inputs.append(cleaned_text)
+            text_inputs = cleaned_text_inputs
         
         # Calculate remaining tokens
         remaining_tokens = max_tokens - self.switch_after_tokens
         logger.info(f"  Remaining tokens for continuation: {remaining_tokens}")
 
-        # Generate continuations with small model using text completion mode
+        # Generate continuations with small model
         continuation_results = self._batch_generate(small_model, text_inputs, remaining_tokens, is_chat=False, **kwargs)
         
         # Combine results and record attribution
@@ -175,7 +186,17 @@ class Switch(BaseSentenceAggregator):
         results = []
         for output in outputs:
             text = output.text if hasattr(output, 'text') else str(output)
-            token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            
+            # Check if output already has token_count (from API)
+            if hasattr(output, 'token_count') and output.token_count is not None:
+                token_count = output.token_count
+            elif tokenizer is not None:
+                # Use tokenizer to count tokens
+                token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            else:
+                # Fallback estimation: 1 token ≈ 4 characters
+                token_count = len(text) // 4 if text else 0
+            
             results.append((text, token_count))
 
         return results
