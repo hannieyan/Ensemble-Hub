@@ -131,7 +131,7 @@ class Switch(BaseSentenceAggregator):
             # api_continued_examples.append([
             #     {"role": "user", "content": ex + "(please continue thinking and end with think token)" + first_text}
             # ])
-        
+
         # Apply chat template to convert chat format to text
         if hasattr(small_model.apply_chat_template, 'remote'):
             # Ray actor
@@ -154,22 +154,17 @@ class Switch(BaseSentenceAggregator):
         
         # For API models, apply_chat_template returns the original conversation
         # We need to use the conversation directly for API generation
-        if isinstance(text_inputs[0], list):
-            # API model case - use api_continued_examples with prepended text
-            text_inputs = continued_examples
-        else:
-            # HF model case - clean special tokens and use text mode
-            special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
-            cleaned_text_inputs = []
-            for text in text_inputs:
-                cleaned_text = text
-                # Check if the text ends with any of the special tokens and remove from the end
-                for token in special_tokens_to_remove:
-                    if cleaned_text.endswith(token):
-                        cleaned_text = cleaned_text[:-len(token)]
-                        break  # Only remove the first match to avoid over-removing
-                cleaned_text_inputs.append(cleaned_text)
-            text_inputs = cleaned_text_inputs
+        special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
+        cleaned_text_inputs = []
+        for text in text_inputs:
+            cleaned_text = text
+            # Check if the text ends with any of the special tokens and remove from the end
+            for token in special_tokens_to_remove:
+                if cleaned_text.endswith(token):
+                    cleaned_text = cleaned_text[:-len(token)]
+                    break  # Only remove the first match to avoid over-removing
+            cleaned_text_inputs.append(cleaned_text)
+        text_inputs = cleaned_text_inputs
         
         # Calculate remaining tokens
         remaining_tokens = max_tokens - self.switch_after_tokens

@@ -10,7 +10,7 @@ server:
 debug:
   show_input_details: false  # Show raw HTTP request body in logs
   show_output_details: false  # Show detailed output results in logs
-  save_results: false  # Save results to disk (useful for debugging)
+  save_results: true  # Save results to disk (useful for debugging)
 
 # Model Specifications
 # Format: path, engine (hf/vllm/hf_rm/hf_gen/api), and optional parameters
@@ -45,7 +45,7 @@ ensemble:
   # Options: loop, progressive, random, reward_based
   output_aggregation_method: "switch"
   output_aggregation_params:
-    switch_after_tokens: 100  # Maximum tokens for outline generation
+    switch_after_tokens: 1000  # Maximum tokens for outline generation
   
   # Default generation parameters (can be overridden by API request)
   generation:

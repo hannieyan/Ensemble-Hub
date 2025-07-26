@@ -28,8 +28,10 @@ class APIGenerator:
         quantization: str = "none",  # Unused for API
         enable_thinking: bool = True,
         padding_side: str = "left",  # Unused for API
+        max_concurrent_requests: int = 5,  # Limit concurrent requests
     ):
         self.model_name = model_path
+        self.max_concurrent_requests = max_concurrent_requests
         
         # Initialize AsyncOpenAI client with optimized settings for concurrent requests
         import httpx
@@ -38,10 +40,10 @@ class APIGenerator:
             api_key=os.getenv("OPENROUTER_API_KEY"),
             http_client=httpx.AsyncClient(
                 limits=httpx.Limits(
-                    max_connections=100,  # Allow more concurrent connections
-                    max_keepalive_connections=20
+                    max_connections=50,  # Reduced for stability
+                    max_keepalive_connections=10
                 ),
-                timeout=httpx.Timeout(60.0)  # 60 second timeout
+                timeout=httpx.Timeout(120.0)  # Increased timeout
             )
         )
         
@@ -50,15 +52,12 @@ class APIGenerator:
         
         # Optional stop string list
         self.stop_strings = [
-            "<|endoftext|>",  # Common end token for many models
-            "<|im_end|>",  # Qwen models use this as end token
-            "<｜end▁of▁sentence｜>",  # Deepseek models use this as end token
+            # "<|endoftext|>",  # Common end token for many models
+            # "<|im_end|>",  # Qwen models use this as end token
+            # "<｜end▁of▁sentence｜>",  # Deepseek models use this as end token
         ]
-
-        # Create a semaphore to limit concurrent requests (avoid overwhelming the API)
-        self.semaphore = None  # Will be created in the async context
         
-        logger.info(f"<🏗️ APIGenerator {self.name} initialized with base_url: https://aihubmix.com/v1")
+        logger.info(f"<🏗️ APIGenerator {self.name} initialized with max_concurrent_requests={max_concurrent_requests}")
 
     async def _process_single_input(
         self,
@@ -72,91 +71,73 @@ class APIGenerator:
         stop_strings,
         seed,
         input_index=None,
+        semaphore=None,
     ):
-        """Process a single input asynchronously and return GenOutput."""
-        import time
-        start_time = time.time()
-        
-        # Use the shared async client
-        client = self.client
-        
-        logger.info(f"[Input {input_index}] Starting API request")
-        logger.debug(f"Processing input (is_chat={is_chat}): {input_data}")
-        
-        if is_chat:
-            # Chat completion mode
-            messages = input_data
+        """Process a single input with semaphore control and return GenOutput."""
+        async with semaphore:
+            # Use the shared async client
+            client = self.client
+            
+            if is_chat:
+                # Chat completion mode
+                messages = input_data
 
-            # Chat completion API parameters
-            api_params = {
-                "model": self.model_name,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature if temperature > 0 else 0,
-                "top_p": top_p if temperature > 0 else 1.0,
-                "frequency_penalty": max(-2.0, min(2.0, (repetition_penalty - 1.0) * 2)),
-                "stop": stop_strings if stop_strings else None,
-                "seed": seed,
-            }
-            
-            # Add reasoning parameter if thinking is enabled for chat
-            if self.enable_thinking:
-                api_params["reasoning"] = {
-                    "effort": "medium",
-                    "summary": "auto"
+                # Chat completion API parameters
+                api_params = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature if temperature > 0 else 0,
+                    "top_p": top_p if temperature > 0 else 1.0,
+                    "frequency_penalty": max(-2.0, min(2.0, (repetition_penalty - 1.0) * 2)),
+                    "stop": stop_strings if stop_strings else None,
+                    "seed": seed,
                 }
-            
-            completion = await client.chat.completions.create(**api_params)
-            response_text = completion.choices[0].message.content
-            
-        else:
-            # Text completion mode - use raw prompt
-            prompt = input_data if isinstance(input_data, str) else str(input_data)
-            
-            # Handle continue_final_message for text completion
-            if continue_final_message:
-                # For text completion, we assume the prompt already contains partial text
-                pass  # No special handling needed
-            
-            # Text completion API parameters
-            api_params = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature if temperature > 0 else 0,
-                "top_p": top_p if temperature > 0 else 1.0,
-                "frequency_penalty": max(-2.0, min(2.0, (repetition_penalty - 1.0) * 2)),
-                "stop": stop_strings if stop_strings else None,
-                "seed": seed,
-            }
-            
-            # Note: reasoning parameter is typically not available for text completions
-            # but we can try to add it if thinking is enabled
-            if self.enable_thinking:
-                api_params["reasoning"] = {
-                    "effort": "medium",
-                    "summary": "auto"
-                }
-            
-            completion = await client.completions.create(**api_params)
-            response_text = completion.choices[0].text
+                
+                completion = await client.chat.completions.create(**api_params)
+                message = completion.choices[0].message
+                response_text = message.content or ""
+                
+                # Check if there's reasoning (thinking process) and combine with response
+                if hasattr(message, 'reasoning') and message.reasoning:
+                    if response_text.strip():  # 如果有最终答案
+                        response_text = f"<think>\n{message.reasoning}\n</think>\n{response_text}"
+                    else:  # 如果没有最终答案，只有思考过程，不加</think>让模型继续
+                        response_text = f"<think>\n{message.reasoning}"
+                
+                logger.info(f"[Input {input_index}] Chat completion response length: {len(response_text)}, preview: '{response_text[:100]}'")
+                
+            else:
+                # Text completion mode - use raw prompt
+                prompt = input_data
 
-        # Check if response was truncated
-        finish_reason = completion.choices[0].finish_reason
-        ended = finish_reason == "stop"
-        
-        # Extract token count from usage
-        token_count = completion.usage.completion_tokens
-        
-        # Log completion time
-        end_time = time.time()
-        logger.info(f"[Input {input_index}] API request completed in {end_time - start_time:.2f}s")
-        
-        # Create output with token_count attribute
-        output = GenOutput(response_text, ended)
-        output.token_count = token_count
-        
-        return output
+                # Text completion API parameters
+                api_params = {
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature if temperature > 0 else 0,
+                    "top_p": top_p if temperature > 0 else 1.0,
+                    "frequency_penalty": max(-2.0, min(2.0, (repetition_penalty - 1.0) * 2)),
+                    "stop": stop_strings if stop_strings else None,
+                    "seed": seed,
+                }
+                
+                completion = await client.completions.create(**api_params)
+                response_text = completion.choices[0].text or ""
+
+            # Check if response was truncated
+            finish_reason = completion.choices[0].finish_reason
+            ended = finish_reason == "stop"
+            
+            # Extract token count from usage
+            token_count = completion.usage.completion_tokens if completion.usage else 0
+            
+            # Create output with token_count attribute
+            output = GenOutput(response_text, ended)
+            output.token_count = token_count
+            
+            return output
 
     def generate(
         self,
@@ -183,17 +164,21 @@ class APIGenerator:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # Create tasks for all inputs with index for logging
+                # Create semaphore for limiting concurrent requests
+                semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+                
+                # Create tasks for all inputs with semaphore control
                 tasks = [
                     self._process_single_input(
                         input_data, is_chat, continue_final_message, max_tokens,
-                        temperature, top_p, repetition_penalty, stop_strings, seed, i
+                        temperature, top_p, repetition_penalty, stop_strings, seed, i, semaphore
                     )
                     for i, input_data in enumerate(inputs)
                 ]
                 
                 # Run all tasks concurrently
-                results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+                results = loop.run_until_complete(asyncio.gather(*tasks))
+                logger.info(f"Generated {len(results)} results: {[f'({len(r.text)} chars)' for r in results]}")
                 return results
             finally:
                 loop.close()
@@ -203,16 +188,7 @@ class APIGenerator:
             future = executor.submit(run_async_in_thread)
             results = future.result()
         
-        # Process results and handle exceptions
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Error processing input {i}: {result}")
-                processed_results.append(GenOutput(f"Error: {str(result)}", True))
-            else:
-                processed_results.append(result)
-        
-        return processed_results
+        return results
 
     def apply_chat_template(self,
         conversation: List[List[dict]],
@@ -221,10 +197,27 @@ class APIGenerator:
         continue_final_message: bool = False,
         tokenize: bool = True,
     ) -> List[str]:
-        """Apply chat template to a conversation - for API we just format as messages."""
-        # For API-based models, we don't need to apply templates
-        # Just return the conversation as-is
-        return conversation
+        """Apply chat template using a fixed HuggingFace tokenizer for consistency."""
+        from transformers import AutoTokenizer
+        
+        # Use a fixed tokenizer for template processing
+        self._template_tokenizer = AutoTokenizer.from_pretrained(
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            trust_remote_code=True
+        )
+
+        # Apply chat template to each conversation
+        text_results = []
+        for conv in conversation:
+            text = self._template_tokenizer.apply_chat_template(
+                conv,
+                add_generation_prompt=add_generation_prompt,
+                enable_thinking=enable_thinking,
+                continue_final_message=continue_final_message,
+                tokenize=tokenize,
+            )
+            text_results.append(text)
+        return text_results
 
     def calculate_ppl(self, prompt_context_text: str, completion_text: str) -> Optional[float]:
         """Calculate perplexity - not available for API models."""
@@ -242,19 +235,6 @@ class APIGenerator:
     def get_tokenizer(self):
         """API models don't expose tokenizers."""
         return None
-    
-    def count_tokens(self, texts: List[str]) -> List[int]:
-        """Estimate token count for API models."""
-        # Rough estimation: 1 token H 4 characters
-        token_counts = []
-        for text in texts:
-            if text:
-                # Very rough approximation
-                estimated_tokens = len(text) // 4
-                token_counts.append(estimated_tokens)
-            else:
-                token_counts.append(0)
-        return token_counts
 
     def get_model_size(self) -> float:
         """Extract model size from model name for API models."""
