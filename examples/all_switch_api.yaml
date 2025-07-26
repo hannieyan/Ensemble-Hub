@@ -17,11 +17,11 @@ debug:
 # Note: For API models, path format is "model_name:base_url:api_key"
 # The api_key should be set as environment variable AIHUBMIX_API_KEY
 model_specs:
-  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+  - path: "deepseek/deepseek-r1-distill-qwen-7b"
     engine: "api"
     enable_thinking: false
   
-  - path: "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+  - path: "deepseek/deepseek-r1-distill-qwen-32b"
     engine: "api"
     enable_thinking: false
   

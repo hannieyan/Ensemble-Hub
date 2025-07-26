@@ -23,8 +23,20 @@ def select_two_largest_models(generators: List) -> Tuple[Any, Any]:
     # Get sizes and names for all generators
     gen_info = []
     for gen in generators:
-        size = ray.get(gen.get_model_size.remote())
-        name = ray.get(gen.get_model_name.remote()) if hasattr(gen, 'get_model_name') else 'unknown'
+        # Check if this is a Ray actor or regular object
+        if hasattr(gen, 'get_model_size'):
+            # Regular object (like APIGenerator)
+            if hasattr(gen.get_model_size, 'remote'):
+                # Ray actor
+                size = ray.get(gen.get_model_size.remote())
+                name = ray.get(gen.get_model_name.remote()) if hasattr(gen, 'get_model_name') else 'unknown'
+            else:
+                # Regular object
+                size = gen.get_model_size()
+                name = gen.get_model_name() if hasattr(gen, 'get_model_name') else 'unknown'
+        else:
+            size = 0.0
+            name = 'unknown'
         gen_info.append((gen, size, name))
         logger.info(f"Model size detected: {name} = {size}B params")
 
@@ -78,8 +90,16 @@ class Switch(BaseSentenceAggregator):
         large_model, small_model = select_two_largest_models(generators)
         
         # Get model names and create attributions
-        large_model_name = ray.get(large_model.get_model_name.remote())
-        small_model_name = ray.get(small_model.get_model_name.remote())
+        # Handle both Ray actors and regular objects
+        if hasattr(large_model.get_model_name, 'remote'):
+            large_model_name = ray.get(large_model.get_model_name.remote())
+        else:
+            large_model_name = large_model.get_model_name()
+            
+        if hasattr(small_model.get_model_name, 'remote'):
+            small_model_name = ray.get(small_model.get_model_name.remote())
+        else:
+            small_model_name = small_model.get_model_name()
         attributions = [ModelAttribution() for _ in examples]
 
         # Stage 1: Generate initial part with large model
@@ -113,13 +133,24 @@ class Switch(BaseSentenceAggregator):
             # ])
         
         # Apply chat template to convert chat format to text
-        text_inputs = ray.get(small_model.apply_chat_template.remote(
-            continued_examples,
-            add_generation_prompt=True,
-            enable_thinking=True,
-            continue_final_message=False,
-            tokenize=False,
-        ))
+        if hasattr(small_model.apply_chat_template, 'remote'):
+            # Ray actor
+            text_inputs = ray.get(small_model.apply_chat_template.remote(
+                continued_examples,
+                add_generation_prompt=True,
+                enable_thinking=True,
+                continue_final_message=False,
+                tokenize=False,
+            ))
+        else:
+            # Regular object
+            text_inputs = small_model.apply_chat_template(
+                continued_examples,
+                add_generation_prompt=True,
+                enable_thinking=True,
+                continue_final_message=False,
+                tokenize=False,
+            )
         
         # For API models, apply_chat_template returns the original conversation
         # We need to use the conversation directly for API generation
@@ -180,8 +211,15 @@ class Switch(BaseSentenceAggregator):
             "stop_strings": kwargs.get("stop_strings", None),
         }
 
-        outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
-        tokenizer = ray.get(model.get_tokenizer.remote())
+        # Handle both Ray actors and regular objects
+        if hasattr(model.generate, 'remote'):
+            # Ray actor
+            outputs = ray.get(model.generate.remote(conversations, **gen_kwargs))
+            tokenizer = ray.get(model.get_tokenizer.remote())
+        else:
+            # Regular object (API generator with async method)
+            outputs = model.generate(conversations, **gen_kwargs)
+            tokenizer = model.get_tokenizer()
 
         results = []
         for output in outputs:

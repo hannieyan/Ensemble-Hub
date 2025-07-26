@@ -3,24 +3,18 @@ API-based Generator for external model APIs (OpenAI-compatible)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-import math
-import time
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Union
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import ray
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from .base import GenOutput
 
 logger = logging.getLogger("ensemble_inference")
-
-
-def get_remote_api_generator_class(num_gpus):
-    # API calls don't need GPUs, but we keep the interface consistent
-    return ray.remote(num_gpus=0)(APIGenerator)
 
 
 class APIGenerator:
@@ -37,10 +31,18 @@ class APIGenerator:
     ):
         self.model_name = model_path
         
-        # Initialize OpenAI client with fixed base_url and env API key
-        self.client = OpenAI(
-            base_url="https://aihubmix.com/v1",
-            api_key=os.getenv("AIHUBMIX_API_KEY")
+        # Initialize AsyncOpenAI client with optimized settings for concurrent requests
+        import httpx
+        self.client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            http_client=httpx.AsyncClient(
+                limits=httpx.Limits(
+                    max_connections=100,  # Allow more concurrent connections
+                    max_keepalive_connections=20
+                ),
+                timeout=httpx.Timeout(60.0)  # 60 second timeout
+            )
         )
         
         self.name = self.model_name
@@ -53,9 +55,12 @@ class APIGenerator:
             "<｜end▁of▁sentence｜>",  # Deepseek models use this as end token
         ]
 
+        # Create a semaphore to limit concurrent requests (avoid overwhelming the API)
+        self.semaphore = None  # Will be created in the async context
+        
         logger.info(f"<🏗️ APIGenerator {self.name} initialized with base_url: https://aihubmix.com/v1")
 
-    def _process_single_input(
+    async def _process_single_input(
         self,
         input_data,
         is_chat,
@@ -66,14 +71,16 @@ class APIGenerator:
         repetition_penalty,
         stop_strings,
         seed,
+        input_index=None,
     ):
-        """Process a single input and return GenOutput."""
-        # Create a new client for thread safety
-        client = OpenAI(
-            base_url="https://aihubmix.com/v1",
-            api_key=os.getenv("AIHUBMIX_API_KEY")
-        )
+        """Process a single input asynchronously and return GenOutput."""
+        import time
+        start_time = time.time()
         
+        # Use the shared async client
+        client = self.client
+        
+        logger.info(f"[Input {input_index}] Starting API request")
         logger.debug(f"Processing input (is_chat={is_chat}): {input_data}")
         
         if is_chat:
@@ -99,7 +106,7 @@ class APIGenerator:
                     "summary": "auto"
                 }
             
-            completion = client.chat.completions.create(**api_params)
+            completion = await client.chat.completions.create(**api_params)
             response_text = completion.choices[0].message.content
             
         else:
@@ -131,9 +138,8 @@ class APIGenerator:
                     "summary": "auto"
                 }
             
-            completion = client.completions.create(**api_params)
+            completion = await client.completions.create(**api_params)
             response_text = completion.choices[0].text
-
 
         # Check if response was truncated
         finish_reason = completion.choices[0].finish_reason
@@ -141,6 +147,10 @@ class APIGenerator:
         
         # Extract token count from usage
         token_count = completion.usage.completion_tokens
+        
+        # Log completion time
+        end_time = time.time()
+        logger.info(f"[Input {input_index}] API request completed in {end_time - start_time:.2f}s")
         
         # Create output with token_count attribute
         output = GenOutput(response_text, ended)
@@ -165,38 +175,44 @@ class APIGenerator:
         # Combine stop strings
         stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
         
-        # Process inputs in parallel using ThreadPoolExecutor
-        results = [None] * len(inputs)  # Preserve order
+        logger.info(f"Processing {len(inputs)} inputs concurrently with asyncio")
         
-        with ThreadPoolExecutor(max_workers=len(inputs)) as executor:
-            # Submit all tasks
-            future_to_index = {
-                executor.submit(
-                    self._process_single_input,
-                    input_data,
-                    is_chat,
-                    continue_final_message,
-                    max_tokens,
-                    temperature,
-                    top_p,
-                    repetition_penalty,
-                    stop_strings,
-                    seed
-                ): i
-                for i, input_data in enumerate(inputs)
-            }
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_index):
-                index = future_to_index[future]
-                try:
-                    results[index] = future.result()
-                except Exception as e:
-                    logger.error(f"Error processing input {index}: {e}")
-                    # Create error output
-                    results[index] = GenOutput(f"Error: {str(e)}", True)
+        # Run async code in a separate thread to avoid event loop conflicts
+        def run_async_in_thread():
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Create tasks for all inputs with index for logging
+                tasks = [
+                    self._process_single_input(
+                        input_data, is_chat, continue_final_message, max_tokens,
+                        temperature, top_p, repetition_penalty, stop_strings, seed, i
+                    )
+                    for i, input_data in enumerate(inputs)
+                ]
+                
+                # Run all tasks concurrently
+                results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+                return results
+            finally:
+                loop.close()
         
-        return results
+        # Execute in a separate thread
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_async_in_thread)
+            results = future.result()
+        
+        # Process results and handle exceptions
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Error processing input {i}: {result}")
+                processed_results.append(GenOutput(f"Error: {str(result)}", True))
+            else:
+                processed_results.append(result)
+        
+        return processed_results
 
     def apply_chat_template(self,
         conversation: List[List[dict]],
