@@ -154,7 +154,12 @@ class Switch(BaseSentenceAggregator):
         
         # For API models, apply_chat_template returns the original conversation
         # We need to use the conversation directly for API generation
-        special_tokens_to_remove = ["<｜end▁of▁sentence｜><｜Assistant｜><think>", "<｜end▁of▁sentence｜><｜Assistant｜>"]
+        special_tokens_to_remove = [
+            "<｜end▁of▁sentence｜><｜Assistant｜><think>\n",  # For API models
+            "<｜end▁of▁sentence｜><｜Assistant｜><think> ",  # For API models
+            "<｜end▁of▁sentence｜><｜Assistant｜><think>",
+            "<｜end▁of▁sentence｜><｜Assistant｜>",
+        ]
         cleaned_text_inputs = []
         for text in text_inputs:
             cleaned_text = text
@@ -163,6 +168,8 @@ class Switch(BaseSentenceAggregator):
                 if cleaned_text.endswith(token):
                     cleaned_text = cleaned_text[:-len(token)]
                     break  # Only remove the first match to avoid over-removing
+                else:
+                    print(cleaned_text)
             cleaned_text_inputs.append(cleaned_text)
         text_inputs = cleaned_text_inputs
         
