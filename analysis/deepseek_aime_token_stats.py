@@ -47,7 +47,13 @@ def build_prompt(example: Dict[str, Any]) -> str:
 
 
 def prepare_model(model_name: str) -> tuple[AutoTokenizer, AutoModelForCausalLM]:
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Failed to parse tokenizer configuration. Ensure the model is fully downloaded "
+            "or configure Hugging Face authentication (e.g. set HF_TOKEN or run `huggingface-cli login`)."
+        ) from exc
     if tokenizer.pad_token_id is None:
         # Align pad/eos for causal LM decoding
         tokenizer.pad_token = tokenizer.eos_token
