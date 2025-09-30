@@ -80,7 +80,17 @@ def _parse_args(parser: HfArgumentParser, args: Optional[Union[Dict[str, Any], l
         flat_args['top_p'] = generation_section.get('top_p', 1.0)
         flat_args['top_k'] = generation_section.get('top_k', 50)
         flat_args['repetition_penalty'] = generation_section.get('repetition_penalty', 1.0)
-        flat_args['stop_strings'] = generation_section.get('stop_strings', [])
+        stop_strings = generation_section.get('stop_strings', [])
+        if isinstance(stop_strings, str):
+            stop_strings = [stop_strings]
+        flat_args['stop_strings'] = stop_strings
+
+        extract_after = generation_section.get('extract_after', [])
+        if isinstance(extract_after, str):
+            extract_after = [extract_after]
+        elif extract_after is None:
+            extract_after = []
+        flat_args['extract_after'] = extract_after
         flat_args['seed'] = generation_section.get('seed')
         
         # Extract generator parameters

@@ -36,10 +36,14 @@ class GeneratorArguments:
         metadata={"help": "The parameter for repetition penalty. 1.0 means no penalty."}
     )
     
-    
     stop_strings: List[str] = field(
         default_factory=list,
         metadata={"help": "List of strings that stop generation."}
+    )
+
+    extract_after: List[str] = field(
+        default_factory=list,
+        metadata={"help": "Return only the text after the last occurrence of these markers."}
     )
     
     seed: Optional[int] = field(

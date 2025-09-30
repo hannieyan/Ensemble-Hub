@@ -53,6 +53,10 @@ class ChatCompletionRequest(BaseModel):
     top_p: float = Field(default=1.0, description="Top-p sampling")
     n: int = Field(default=1, description="Number of completions")
     stop: Optional[Union[str, List[str]]] = Field(default=None, description="Stop sequences")
+    extract_after: Optional[Union[str, List[str]]] = Field(
+        default=None,
+        description="If provided, only return content after the given marker(s)"
+    )
     logit_bias: Optional[Dict[int, float]] = Field(default=None, description="Token bias")
     user: Optional[str] = Field(default=None, description="User identifier")
     
@@ -100,7 +104,7 @@ def process_conversations(
     # Build base_params with all config values
     base_params = {
         k: v for k, v in config_dict.items() 
-        if k not in ["model_specs"]  # Use model_specs directly
+        if k not in ["model_specs", "default_extract_after"]  # Use model specs + post-processing separately
     }
     
     # Use the original model_specs directly
@@ -110,6 +114,9 @@ def process_conversations(
     request_dict = request.model_dump(exclude_unset=True)
     # Remove 'model' field as it's not relevant for ensemble
     request_dict.pop('model', None)
+    # Remove post-processing fields that should not be forwarded to the ensemble
+    request_dict.pop('extract_after', None)
+
     base_params.update(request_dict)
 
     # Debug logging
@@ -149,13 +156,27 @@ def process_conversations(
             logger.info(f"📋 Example {i+1}: Method={method}, Model={[m.split('/')[-1] for m in selected_models]}")
             logger.info(f"💬 Generated Output: {output}")
 
-        result_dict = create_result_dict(output, result, example, request, is_chat)
+        result_dict = create_result_dict(
+            output,
+            result,
+            example,
+            request,
+            is_chat,
+            default_extract_after=ensemble_config.default_extract_after
+        )
         results.append(result_dict)
     
     return results
 
 
-def create_result_dict(output: str, result: Dict, example: Union[str, List[Dict]], request: ChatCompletionRequest, is_chat: bool) -> Dict[str, Any]:
+def create_result_dict(
+    output: str,
+    result: Dict,
+    example: Union[str, List[Dict]],
+    request: ChatCompletionRequest,
+    is_chat: bool,
+    default_extract_after: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """Create a standardized result dictionary"""
 
     # Apply stop sequences
@@ -171,6 +192,28 @@ def create_result_dict(output: str, result: Dict, example: Union[str, List[Dict]
     # Check if output ends naturally
     if output.endswith(("<|im_end|>", "</s>", "<|endoftext|>")):
         finish_reason = "stop"
+
+    # Apply extract_after post-processing if requested
+    extract_after = request.extract_after
+    markers: List[str] = []
+    if extract_after:
+        markers = extract_after if isinstance(extract_after, list) else [extract_after]
+    elif default_extract_after:
+        markers = list(default_extract_after)
+
+    if markers:
+        best_cut_index = -1
+        for marker in markers:
+            if not marker:
+                continue
+            marker_index = output.rfind(marker)
+            if marker_index != -1:
+                candidate_index = marker_index + len(marker)
+                if candidate_index > best_cut_index:
+                    best_cut_index = candidate_index
+
+        if best_cut_index != -1:
+            output = output[best_cut_index:].lstrip()
 
     # Create metadata
     metadata = {
@@ -376,10 +419,10 @@ def create_app(ensemble_config: EnsembleConfig, ensemble_framework: EnsembleFram
                 "output_aggregation_params": ensemble_config.output_aggregation_params,
                 "max_rounds": ensemble_config.max_rounds,
                 "score_threshold": ensemble_config.output_aggregation_params.get('score_threshold', -2.0),
+                "default_extract_after": ensemble_config.default_extract_after,
                 "show_output_details": ensemble_config.show_output_details,
             }
         }
 
     
     return app
-

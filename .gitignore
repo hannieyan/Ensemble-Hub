@@ -21,3 +21,6 @@ ensemblehub/selection/z_score/
 
 # Output directory for inference results
 output/
+.vscode/settings.json
+results/
+saves/

@@ -54,11 +54,16 @@ class EnsembleConfig(BaseModel):
     top_k: int = Field(default=50, description="Top-k sampling")
     repetition_penalty: float = Field(default=1.0, description="Repetition penalty")
     stop_strings: List[str] = Field(default_factory=list, description="Default stop strings for generation")
+    default_extract_after: List[str] = Field(
+        default_factory=list,
+        description="Default markers; return text after the last occurrence of any marker"
+    )
     seed: Optional[int] = Field(default=None, description="Random seed")
     
     # Debug options
     show_output_details: bool = Field(default=False, description="Show detailed output in logs")
     show_input_details: bool = Field(default=False, description="Show raw request in logs")
+    enable_thinking: bool = Field(default=False, description="Force generators to include reasoning tokens where supported")
     save_results: bool = Field(default=False, description="Save results to saves/logs directory")
     
     # Server configuration (not part of ensemble logic, but needed somewhere)

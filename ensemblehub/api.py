@@ -47,6 +47,7 @@ def run_api() -> None:
         top_k=generator_args.top_k,
         repetition_penalty=generator_args.repetition_penalty,
         stop_strings=generator_args.stop_strings,
+        default_extract_after=generator_args.extract_after,
         seed=generator_args.seed,
         # Debug options
         show_output_details=ensemble_args.show_output_details,
