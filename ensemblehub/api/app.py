@@ -149,12 +149,11 @@ def process_conversations(
     for i, (example, result) in enumerate(zip(inputs, outputs)):
         output = result["output"]
 
-        # Log output details if requested
+        # Log output details if requested (metadata prior to post-processing)
         if ensemble_config.show_output_details:
             selected_models = result.get("selected_models", [])
             method = result.get("method", "unknown")
             logger.info(f"📋 Example {i+1}: Method={method}, Model={[m.split('/')[-1] for m in selected_models]}")
-            logger.info(f"💬 Generated Output: {output}")
 
         result_dict = create_result_dict(
             output,
@@ -164,6 +163,9 @@ def process_conversations(
             is_chat,
             default_extract_after=ensemble_config.default_extract_after
         )
+
+        if ensemble_config.show_output_details:
+            logger.info(f"💬 Returned Output: {result_dict['content']}")
         results.append(result_dict)
     
     return results
