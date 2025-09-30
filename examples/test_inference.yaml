@@ -1,0 +1,22 @@
+# Test configuration for inference
+debug:
+  show_input_details: true
+  show_output_details: true
+  enable_thinking: false
+  save_results: false
+
+model_specs:
+  - path: "Qwen/Qwen2.5-0.5B-Instruct"
+    engine: "hf"
+    device: "auto"
+  - path: "Qwen/Qwen2.5-1.5B-Instruct" 
+    engine: "hf"
+    device: "auto"
+
+ensemble:
+  model_selection_method: "all"
+  output_aggregation_method: "progressive"
+  generation:
+    max_tokens: 50
+    temperature: 0.7
+    top_p: 0.95
