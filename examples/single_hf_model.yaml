@@ -29,6 +29,7 @@ ensemble:
     presence_penalty: 0.0
     frequency_penalty: 0.0
     stop_strings: []
+    extract_after: "[BEGIN]\n"   # Optional: only return text after the marker
 
 engine_options:
   hf:

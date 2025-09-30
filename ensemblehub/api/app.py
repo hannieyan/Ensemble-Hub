@@ -215,7 +215,16 @@ def create_result_dict(
                     best_cut_index = candidate_index
 
         if best_cut_index != -1:
-            output = output[best_cut_index:].lstrip()
+            trimmed_output = output[best_cut_index:].lstrip()
+        else:
+            trimmed_output = output
+
+        # Remove the marker strings themselves from the returned output
+        for marker in markers:
+            if marker:
+                trimmed_output = trimmed_output.replace(marker, "")
+
+        output = trimmed_output
 
     # Create metadata
     metadata = {
