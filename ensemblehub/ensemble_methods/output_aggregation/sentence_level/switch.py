@@ -203,12 +203,24 @@ class Switch(BaseSentenceAggregator):
         if not conversations:
             return []
         
+        requested_continue = kwargs.get("continue_final_message", None)
+        if requested_continue is None:
+            continue_flag = False
+            if is_chat and hasattr(model, "default_continue_final_message"):
+                method = model.default_continue_final_message
+                if hasattr(method, "remote"):
+                    continue_flag = ray.get(method.remote())
+                else:
+                    continue_flag = method()
+        else:
+            continue_flag = requested_continue
+
         gen_kwargs = {
             "max_tokens": max_tokens,
             "temperature": kwargs.get("temperature", 0.7),
             "top_p": kwargs.get("top_p", 0.9),
             "is_chat": is_chat,
-            "continue_final_message": kwargs.get("continue_final_message", False),
+            "continue_final_message": continue_flag,
             "seed": kwargs.get("seed", 1234),
             "stop_strings": kwargs.get("stop_strings", None),
         }

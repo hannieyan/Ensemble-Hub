@@ -166,6 +166,16 @@ python ensemblehub/api.py
 #### Evaluate with lm-evaluation-harness
 
 ```bash
+lm_eval --model hf \
+   --tasks arc_challenge_chat \
+   --model_args pretrained=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B \
+   --batch_size 2 \
+   --num_fewshot 5
+```
+
+or through the Ensemble-Hub API proxy:
+
+```bash
 # Start API server
 python ensemblehub/api.py examples/all_loop.yaml
 
@@ -176,6 +186,14 @@ lm_eval --model openai-completions \
    --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None \
    --batch_size 2 \
    --num_fewshot 5
+
+# For longer completions (e.g. MBPP) extend the generation budget
+lm_eval --model openai-completions \
+   --tasks mbpp \
+   --model_args model=ensemble,base_url=http://localhost:8000/v1/completions,tokenizer_backend=None,max_gen_toks=1024 \
+   --batch_size 2 \
+   --limit 1 \
+   --confirm_run_unsafe_code
 ```
 
 > **Note**: Server configuration is controlled via environment variables API_HOST and API_PORT.

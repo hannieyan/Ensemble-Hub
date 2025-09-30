@@ -31,7 +31,7 @@ class LoopSelector(BaseSentenceAggregator):
         examples: List[Union[str, List[Dict]]],  # 批处理输入
         max_rounds: int = 500,
         max_tokens: int = 16384,
-        max_new_tokens_per_round: int = 32,
+        max_new_tokens_per_round: int = 500,
         is_chat: bool = False,
         **kwargs
     ) -> List[str]:  # 返回列表
@@ -94,11 +94,24 @@ class LoopSelector(BaseSentenceAggregator):
             logger.info(f"🔄 Round {rnd} (Global: {LoopSelector._global_round}): Using {model_short} (index {gen_idx + 1}/{len(available_gens)})")
 
             # Prepare generation parameters
+            requested_continue = kwargs.get("continue_final_message", None)
+            if requested_continue is None:
+                continue_flag = False
+                if is_chat and hasattr(selected_generator, "default_continue_final_message"):
+                    method = selected_generator.default_continue_final_message
+                    if hasattr(method, "remote"):
+                        continue_flag = ray.get(method.remote())
+                    else:
+                        continue_flag = method()
+            else:
+                continue_flag = requested_continue
+
             gen_kwargs = {
                 "max_tokens": max_new_tokens_per_round,
                 "temperature": kwargs.get("temperature", 0.95),
                 "top_p": kwargs.get("top_p", 0.7),
                 "is_chat": is_chat,  # We've already applied chat template
+                "continue_final_message": continue_flag,
             }
             if "seed" in kwargs:
                 gen_kwargs["seed"] = kwargs["seed"]

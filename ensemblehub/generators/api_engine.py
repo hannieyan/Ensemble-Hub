@@ -246,6 +246,10 @@ class APIGenerator:
         """API models don't expose tokenizers."""
         return None
 
+    def default_continue_final_message(self) -> bool:
+        """API backends should start fresh assistant turns by default."""
+        return False
+
     def get_model_size(self) -> float:
         """Extract model size from model name for API models."""
         import re

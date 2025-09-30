@@ -1,0 +1,41 @@
+# Minimal Ensemble-Hub configuration for invoking a single HuggingFace model
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+debug:
+  show_input_details: true
+  show_output_details: true
+
+model_specs:
+  - path: "Qwen/Qwen3-4B"
+    engine: "hf"
+    enable_thinking: true
+    # Optional per-model overrides:
+    # max_memory: null
+    # quantization: "none"
+
+reward_specs: []
+
+ensemble:
+  model_selection_method: "all"
+  output_aggregation_method: "loop"
+  max_rounds: 1
+  generation:
+    max_tokens: 2048
+    temperature: 1.0
+    top_p: 1.0
+    presence_penalty: 0.0
+    frequency_penalty: 0.0
+    stop_strings: []
+
+engine_options:
+  hf:
+    use_eager_attention: true
+    disable_device_map: false
+    use_8bit: false
+    use_4bit: false
+    low_cpu_mem: true
+
+model_stats: {}

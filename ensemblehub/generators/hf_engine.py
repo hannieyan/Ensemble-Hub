@@ -6,6 +6,7 @@ from __future__ import annotations
 import inspect
 import logging
 import math
+import re
 from typing import List, Optional, Union
 
 import ray
@@ -110,7 +111,7 @@ class HFGenerator:
         inputs: List,
         is_chat,
         continue_final_message,
-        max_tokens=256,
+        max_tokens=65536,
         temperature=0.95,
         top_p=0.7,
         top_k=50,
@@ -125,14 +126,18 @@ class HFGenerator:
         stop_strings = stop_strings + self.stop_strings if stop_strings else self.stop_strings
 
         # Auto-detect format: if input has "prompt" field, it's text completion
-        if is_chat:
+        if is_chat or (not is_chat and self.enable_thinking):
             chat_inputs = []
             for text_input in inputs:
-                # Chat completion mode - use apply_chat_template
-                # logger.info(f"  Messages: {inputs[0]}")
-                # Check if tokenizer supports enable_thinking
+                if is_chat:
+                    conversation = text_input
+                else:
+                    conversation = [
+                        {"role": "system", "content": "Think step-by-step inside <think></think>, then provide the final answer after </think> and include any required delimiters."},
+                        {"role": "user", "content": text_input}
+                    ]
                 chat_input = self.tokenizer.apply_chat_template(
-                    text_input,
+                    conversation,
                     add_generation_prompt=True if not continue_final_message else False,
                     enable_thinking=self.enable_thinking,
                     continue_final_message=continue_final_message,
@@ -188,12 +193,21 @@ class HFGenerator:
         # Batch decode all sequences with special tokens removed
         texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 
+        if not is_chat and self.enable_thinking:
+            texts = [self._strip_reasoning_tokens(txt) for txt in texts]
+
         # Determine ended status based on token count
         # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)
         token_counts = [len(self.tokenizer(txt, add_special_tokens=False)["input_ids"]) for txt in texts]
         ended_status = [count < max_tokens - 1 for count in token_counts]
 
         return [GenOutput(txt, ended) for txt, ended in zip(texts, ended_status)]
+
+    @staticmethod
+    def _strip_reasoning_tokens(text: str) -> str:
+        pattern = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
+        cleaned = re.sub(pattern, "", text)
+        return cleaned.lstrip()
 
 
     def apply_chat_template(self,
@@ -322,6 +336,10 @@ class HFGenerator:
         """Get model size in billions of parameters"""
         total_params = sum(p.numel() for p in self.model.parameters())
         return total_params / 1e9
+
+    def default_continue_final_message(self) -> bool:
+        """HF models can safely continue the last assistant message when requested."""
+        return True
 
     # ================================================================================
     # ========================= CUSTOM METHODS (NON-STANDARD) ========================
