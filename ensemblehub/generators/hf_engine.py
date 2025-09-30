@@ -193,8 +193,9 @@ class HFGenerator:
         # Batch decode all sequences with special tokens removed
         texts = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 
-        if not is_chat and self.enable_thinking:
-            texts = [self._strip_reasoning_tokens(txt) for txt in texts]
+        # Note: preserve `<think>` reasoning blocks when thinking mode is enabled
+        # so callers receive the full chain-of-thought instead of a stripped
+        # answer-only response.
 
         # Determine ended status based on token count
         # Tokenize texts to count tokens (add_special_tokens=False to get accurate count)
