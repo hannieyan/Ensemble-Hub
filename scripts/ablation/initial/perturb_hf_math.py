@@ -76,6 +76,8 @@ class ExampleResult:
     is_correct: bool
     corruption_stats: Dict[str, int]
     raw_completion: str
+    corruption_rate: float
+    range_label: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,6 +128,21 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.15,
         help="Fraction of eligible tokens to corrupt (0-1 range)",
+    )
+    parser.add_argument(
+        "--corruption_rates",
+        type=str,
+        help="Comma-separated list of corruption rates to sweep (overrides --corruption_rate)",
+    )
+    parser.add_argument(
+        "--corrupt_ranges",
+        type=str,
+        help="Comma-separated character ranges (start-end) to target for corruption, e.g. '0-100,100-200'",
+    )
+    parser.add_argument(
+        "--range_sweep",
+        type=str,
+        help="Sweep over multiple range specifications; same format as --corrupt_ranges",
     )
     parser.add_argument(
         "--corrupt_ranges",
@@ -182,6 +199,11 @@ def parse_args() -> argparse.Namespace:
         "--output_path",
         type=Path,
         help="Optional JSONL file to store detailed predictions",
+    )
+    parser.add_argument(
+        "--summary_path",
+        type=Path,
+        help="Optional JSON file to store per-configuration accuracy summaries",
     )
     parser.add_argument(
         "--verbose",
@@ -258,6 +280,9 @@ def parse_range_spec(spec: str) -> List[Tuple[int, int]]:
     for raw in re.split(r"[,;]", spec):
         part = raw.strip()
         if not part:
+            continue
+        if part.lower() in {"none", "random"}:
+            ranges.append((-1, -1))
             continue
         if "-" not in part:
             raise ValueError(f"Invalid range '{part}', expected 'start-end'")
@@ -427,12 +452,12 @@ def generate_response(
 
 def evaluate(
     args: argparse.Namespace,
+    dataset: Dataset,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    corruption_rate: float,
     target_spans: Optional[List[Tuple[int, int]]] = None,
 ) -> List[ExampleResult]:
-    set_seed(args.seed)
-    dataset = load_samples(args)
-    model, tokenizer = load_model_and_tokenizer(args.model_path, args.device)
-
     results: List[ExampleResult] = []
     for idx in tqdm(range(len(dataset)), desc="Evaluating", total=len(dataset)):
         sample = dataset[idx]
@@ -441,7 +466,7 @@ def evaluate(
 
         corrupted_question, stats = corrupt_question(
             question,
-            args.corruption_rate,
+            corruption_rate,
             args.min_corrupt_tokens,
             args.max_corrupt_tokens,
             target_spans=target_spans,
@@ -461,6 +486,8 @@ def evaluate(
         predicted_answer = extract_answer(completion)
         is_correct = grade_answer(predicted_answer, reference)
 
+        range_label = format_span_label(target_spans)
+
         if args.verbose:
             print("-" * 80)
             print(f"Example {idx}")
@@ -470,6 +497,8 @@ def evaluate(
             print(f"Parsed answer: {predicted_answer}")
             print(f"Ground truth: {reference}")
             print(f"Correct: {is_correct}")
+            print(f"Corrupted tokens: {stats['corrupted_tokens']}")
+            print(f"Range label: {range_label}")
 
         results.append(
             ExampleResult(
@@ -481,6 +510,8 @@ def evaluate(
                 is_correct=is_correct,
                 corruption_stats=stats,
                 raw_completion=completion,
+                corruption_rate=corruption_rate,
+                range_label=range_label,
             )
         )
 
@@ -512,34 +543,93 @@ def save_results(path: Path, results: Iterable[ExampleResult]) -> None:
                 "is_correct": item.is_correct,
                 "corrupted_tokens": item.corruption_stats.get("corrupted_tokens", 0),
                 "completion": item.raw_completion,
+                "corruption_rate": item.corruption_rate,
+                "range_label": item.range_label,
+                "target_spans": item.corruption_stats.get("target_spans", []),
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def format_span_label(spans: Optional[List[Tuple[int, int]]]) -> str:
+    if not spans:
+        return "random"
+    normalized = []
+    for span in spans:
+        if span == (-1, -1):
+            return "random"
+        normalized.append(f"{span[0]}-{span[1]}")
+    return ",".join(normalized)
+
+
 def main() -> None:
     args = parse_args()
-    target_spans = None
-    if args.corrupt_ranges:
-        target_spans = parse_range_spec(args.corrupt_ranges)
-        if args.verbose:
-            print(f"Using corruption ranges: {target_spans}")
+    dataset = load_samples(args)
+    model, tokenizer = load_model_and_tokenizer(args.model_path, args.device)
 
-    results = evaluate(args, target_spans=target_spans)
-    metrics = summarize(results)
+    # Determine corruption rates to evaluate
+    if args.corruption_rates:
+        corruption_rates = [float(x.strip()) for x in args.corruption_rates.split(",") if x.strip()]
+    else:
+        corruption_rates = [args.corruption_rate]
 
-    print("=" * 80)
-    print("Evaluation summary")
-    for key, value in metrics.items():
-        if isinstance(value, float):
-            print(f"{key}: {value:.4f}")
-        else:
-            print(f"{key}: {value}")
-    if target_spans:
-        print(f"Configured corrupt ranges: {target_spans}")
+    # Determine span configurations
+    range_specs: List[Optional[List[Tuple[int, int]]]] = []
+    if args.range_sweep:
+        parsed = parse_range_spec(args.range_sweep)
+        for span in parsed:
+            range_specs.append(None if span == (-1, -1) else [span])
+    elif args.corrupt_ranges:
+        spans = parse_range_spec(args.corrupt_ranges)
+        normalized = [None if span == (-1, -1) else [span] for span in spans]
+        range_specs.extend(normalized)
+    else:
+        range_specs.append(None)
+
+    all_results: List[ExampleResult] = []
+    summary_rows: List[Dict[str, float]] = []
+
+    experiment_idx = 0
+    for rate in corruption_rates:
+        for span_config in range_specs:
+            if args.verbose:
+                print("=" * 80)
+                print(f"Running evaluation for corruption_rate={rate}, spans={span_config}")
+
+            set_seed(args.seed + experiment_idx)
+            experiment_idx += 1
+
+            results = evaluate(
+                args,
+                dataset,
+                model,
+                tokenizer,
+                corruption_rate=rate,
+                target_spans=span_config,
+            )
+            metrics = summarize(results)
+            metrics["corruption_rate"] = rate
+            metrics["range_label"] = format_span_label(span_config)
+
+            print("=" * 80)
+            print(f"Summary for rate={rate}, range={metrics['range_label']}")
+            for key, value in metrics.items():
+                if isinstance(value, float):
+                    print(f"{key}: {value:.4f}")
+                else:
+                    print(f"{key}: {value}")
+
+            summary_rows.append(metrics)
+            all_results.extend(results)
 
     if args.output_path:
-        save_results(args.output_path, results)
+        save_results(args.output_path, all_results)
         print(f"Detailed predictions saved to {args.output_path}")
+
+    if args.summary_path:
+        args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with args.summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary_rows, f, ensure_ascii=False, indent=2)
+        print(f"Summary metrics saved to {args.summary_path}")
 
 
 if __name__ == "__main__":
