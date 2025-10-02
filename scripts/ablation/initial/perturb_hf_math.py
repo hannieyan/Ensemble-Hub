@@ -147,11 +147,6 @@ def parse_args() -> argparse.Namespace:
         help="Sweep over multiple range specifications; same format as --corrupt_ranges",
     )
     parser.add_argument(
-        "--corrupt_ranges",
-        type=str,
-        help="Comma-separated character ranges (start-end) to target for corruption, e.g. '0-10,50-70'",
-    )
-    parser.add_argument(
         "--min_corrupt_tokens",
         type=int,
         default=1,
