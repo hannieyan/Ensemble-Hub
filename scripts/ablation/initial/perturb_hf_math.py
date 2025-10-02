@@ -612,12 +612,14 @@ def evaluate(
 def summarize(results: Sequence[ExampleResult]) -> Dict[str, float]:
     total = len(results)
     correct = sum(1 for r in results if r.is_correct)
-    avg_corrupt = sum(r.corruption_stats.get("corrupted_tokens", 0) for r in results) / max(total, 1)
+    corrupted_token_sum = sum(r.corruption_stats.get("corrupted_tokens", 0) for r in results)
+    avg_corrupt = corrupted_token_sum / max(total, 1)
     return {
         "total": total,
         "correct": correct,
         "accuracy": correct / total if total else 0.0,
         "avg_corrupted_tokens": avg_corrupt,
+        "corrupted_token_sum": corrupted_token_sum,
     }
 
 
@@ -805,12 +807,49 @@ def run_multi_gpu(
         print(f"Detailed predictions saved to {args.output_path}")
 
     if args.summary_path:
-        combined_summary: List[Dict[str, float]] = []
+        combined_summary_map: Dict[Tuple[float, str], Dict[str, float]] = {}
         for _, partial_summary in shard_output_paths:
             if partial_summary and partial_summary.exists():
                 with partial_summary.open("r", encoding="utf-8") as f:
-                    combined_summary.extend(json.load(f))
+                    rows = json.load(f)
+                    for row in rows:
+                        key = (row.get("corruption_rate"), row.get("range_label"))
+                        entry = combined_summary_map.setdefault(
+                            key,
+                            {
+                                "total": 0.0,
+                                "correct": 0.0,
+                                "corrupted_token_sum": 0.0,
+                            },
+                        )
+                        entry["total"] += row.get("total", 0.0)
+                        entry["correct"] += row.get("correct", 0.0)
+                        if "corrupted_token_sum" in row:
+                            entry["corrupted_token_sum"] += row.get("corrupted_token_sum", 0.0)
+                        else:
+                            entry["corrupted_token_sum"] += row.get("avg_corrupted_tokens", 0.0) * row.get("total", 0.0)
                 partial_summary.unlink()
+
+        combined_summary: List[Dict[str, float]] = []
+        for (rate, label), data in combined_summary_map.items():
+            total = data.get("total", 0.0)
+            correct = data.get("correct", 0.0)
+            token_sum = data.get("corrupted_token_sum", 0.0)
+            accuracy = correct / total if total else 0.0
+            avg_corrupt = token_sum / total if total else 0.0
+            combined_summary.append(
+                {
+                    "corruption_rate": rate,
+                    "range_label": label,
+                    "total": total,
+                    "correct": correct,
+                    "accuracy": accuracy,
+                    "avg_corrupted_tokens": avg_corrupt,
+                    "corrupted_token_sum": token_sum,
+                }
+            )
+
+        combined_summary.sort(key=lambda r: (r["corruption_rate"], r["range_label"] or ""))
 
         args.summary_path.parent.mkdir(parents=True, exist_ok=True)
         with args.summary_path.open("w", encoding="utf-8") as f:
