@@ -765,6 +765,7 @@ def run_multi_gpu(
     shard_size = math.ceil(total_examples / len(device_ids)) if device_ids else total_examples
 
     args_dict = vars(args).copy()
+    ctx = mp.get_context("spawn")
     processes: List[mp.Process] = []
     shard_output_paths: List[Tuple[Optional[Path], Optional[Path]]] = []
 
@@ -782,7 +783,7 @@ def run_multi_gpu(
         if args.summary_path:
             summary_path = _make_shard_path(args.summary_path, f".gpu{device_id}")
 
-        p = mp.Process(
+        p = ctx.Process(
             target=_worker_entry,
             args=(args_dict, shard_indices, device_id, corruption_rates, range_specs, output_path, summary_path),
         )
