@@ -41,10 +41,12 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = ROOT_DIR / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+
+for path in (ROOT_DIR, SCRIPTS_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 try:
     # ``grader`` relies on other helpers inside scripts/, so make sure they
