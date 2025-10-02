@@ -101,8 +101,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--dataset_config",
-        default="math500",
-        help="Dataset configuration name on the Hub",
+        default=None,
+        help="Dataset configuration name on the Hub if required",
     )
     parser.add_argument(
         "--split",
@@ -249,11 +249,18 @@ def load_samples(args: argparse.Namespace) -> Dataset:
     if args.dataset_path:
         dataset = load_local_dataset(args.dataset_path)
     else:
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config,
-            split=args.split,
-        )
+        load_kwargs = {"split": args.split}
+        if args.dataset_config:
+            dataset = load_dataset(
+                args.dataset_name,
+                args.dataset_config,
+                **load_kwargs,
+            )
+        else:
+            dataset = load_dataset(
+                args.dataset_name,
+                **load_kwargs,
+            )
 
     if args.num_examples and args.num_examples < len(dataset):
         dataset = dataset.select(range(args.num_examples))
