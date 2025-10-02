@@ -31,9 +31,13 @@ import random
 import re
 import string
 import sys
+import math
+import os
+import multiprocessing as mp
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 from datasets import Dataset, load_dataset
@@ -165,6 +169,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum generation length for the model",
     )
     parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1,
+        help="Number of corrupted prompts to evaluate per generation call",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=0.0,
@@ -191,6 +201,24 @@ def parse_args() -> argparse.Namespace:
         "--device",
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Torch device to run the model on",
+    )
+    parser.add_argument(
+        "--device_map",
+        type=str,
+        default=None,
+        help="Optional Hugging Face device map (e.g. 'auto') for sharding across multiple GPUs",
+    )
+    parser.add_argument(
+        "--torch_dtype",
+        type=str,
+        default=None,
+        help="Optional torch dtype for model weights (e.g. float16, bfloat16)",
+    )
+    parser.add_argument(
+        "--device_ids",
+        type=str,
+        default=None,
+        help="Comma-separated list of GPU device ids for parallel evaluation (each process runs on one)",
     )
     parser.add_argument(
         "--output_path",
@@ -303,6 +331,19 @@ def _spans_intersect(span_a: Tuple[int, int], span_b: Tuple[int, int]) -> bool:
     return not (span_a[1] <= span_b[0] or span_b[1] <= span_a[0])
 
 
+def resolve_dtype(dtype_str: Optional[str]):
+    if not dtype_str:
+        return None
+    key = dtype_str.strip().lower()
+    if key in {"float16", "fp16", "half"}:
+        return torch.float16
+    if key in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+    if key in {"float32", "fp32", "float"}:
+        return torch.float32
+    raise ValueError(f"Unsupported torch dtype: {dtype_str}")
+
+
 def _mutate_numeric(token: str) -> str:
     digits = string.digits
     mutated_chars = []
@@ -397,18 +438,40 @@ def corrupt_question(
     return corrupted, stats
 
 
-def load_model_and_tokenizer(model_path: str, device: str):
+def load_model_and_tokenizer(
+    model_path: str,
+    device: str,
+    device_map: Optional[str] = None,
+    torch_dtype_str: Optional[str] = None,
+):
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-    model.to(device)
+    model_kwargs = {"trust_remote_code": True}
+    if device_map:
+        model_kwargs["device_map"] = device_map
+    torch_dtype = resolve_dtype(torch_dtype_str)
+    if torch_dtype is not None:
+        model_kwargs["torch_dtype"] = torch_dtype
+
+    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+    if not device_map:
+        model.to(device)
     model.eval()
     return model, tokenizer
 
 
 ANSWER_REGEX = re.compile(r"answer\s*[:=]\s*(.+)", flags=re.IGNORECASE)
+
+
+def _get_model_device(model: AutoModelForCausalLM):
+    if hasattr(model, "device"):
+        return model.device
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
 
 
 def extract_answer(text: str) -> Optional[str]:
@@ -424,16 +487,23 @@ def extract_answer(text: str) -> Optional[str]:
     return None
 
 
-def generate_response(
+def generate_responses(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
-    prompt: str,
+    prompts: List[str],
     max_new_tokens: int,
     temperature: float,
     top_p: float,
-    device: str,
-) -> str:
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+) -> List[str]:
+    model_device = _get_model_device(model)
+    inputs = tokenizer(
+        prompts,
+        return_tensors="pt",
+        padding=True,
+        truncation=False,
+    )
+    inputs = {k: v.to(model_device) for k, v in inputs.items()}
+
     generation_kwargs = {
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.pad_token_id,
@@ -450,8 +520,9 @@ def generate_response(
     with torch.no_grad():
         output_ids = model.generate(**inputs, **generation_kwargs)
 
-    generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
-    return tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+    input_len = inputs["input_ids"].shape[1]
+    generated_ids = output_ids[:, input_len:]
+    return tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
 
 def evaluate(
@@ -463,61 +534,77 @@ def evaluate(
     target_spans: Optional[List[Tuple[int, int]]] = None,
 ) -> List[ExampleResult]:
     results: List[ExampleResult] = []
-    for idx in tqdm(range(len(dataset)), desc="Evaluating", total=len(dataset)):
-        sample = dataset[idx]
-        question = sample[args.question_field]
-        reference = sample[args.answer_field]
+    batch_size = max(1, args.batch_size)
+    total_examples = len(dataset)
+    range_label = format_span_label(target_spans)
 
-        corrupted_question, stats = corrupt_question(
-            question,
-            corruption_rate,
-            args.min_corrupt_tokens,
-            args.max_corrupt_tokens,
-            target_spans=target_spans,
-        )
+    num_batches = (total_examples + batch_size - 1) // batch_size if total_examples else 0
+    for batch_idx, start_idx in enumerate(
+        tqdm(range(0, total_examples, batch_size), desc="Evaluating", total=num_batches)
+    ):
+        end_idx = min(start_idx + batch_size, total_examples)
+        batch_prompts: List[str] = []
+        batch_entries: List[Tuple[int, str, str, Dict[str, int], str]] = []
 
-        prompt = args.prompt_template.format(problem=corrupted_question)
-        completion = generate_response(
+        for idx in range(start_idx, end_idx):
+            sample = dataset[idx]
+            question = sample[args.question_field]
+            reference = sample[args.answer_field]
+
+            corrupted_question, stats = corrupt_question(
+                question,
+                corruption_rate,
+                args.min_corrupt_tokens,
+                args.max_corrupt_tokens,
+                target_spans=target_spans,
+            )
+
+            prompt = args.prompt_template.format(problem=corrupted_question)
+            batch_prompts.append(prompt)
+            batch_entries.append((idx, question, reference, stats, corrupted_question))
+
+        completions = generate_responses(
             model,
             tokenizer,
-            prompt,
+            batch_prompts,
             args.max_new_tokens,
             args.temperature,
             args.top_p,
-            args.device,
         )
-
-        predicted_answer = extract_answer(completion)
-        is_correct = grade_answer(predicted_answer, reference)
-
-        range_label = format_span_label(target_spans)
 
         if args.verbose:
-            print("-" * 80)
-            print(f"Example {idx}")
-            print(f"Original question: {question}")
-            print(f"Corrupted question: {corrupted_question}")
-            print(f"Model completion: {completion}")
-            print(f"Parsed answer: {predicted_answer}")
-            print(f"Ground truth: {reference}")
-            print(f"Correct: {is_correct}")
-            print(f"Corrupted tokens: {stats['corrupted_tokens']}")
-            print(f"Range label: {range_label}")
+            print(f"Processed batch {batch_idx + 1}/{num_batches}")
 
-        results.append(
-            ExampleResult(
-                idx=idx,
-                original_question=question,
-                corrupted_question=corrupted_question,
-                reference_answer=reference,
-                predicted_answer=predicted_answer,
-                is_correct=is_correct,
-                corruption_stats=stats,
-                raw_completion=completion,
-                corruption_rate=corruption_rate,
-                range_label=range_label,
+        for (idx, question, reference, stats, corrupted_question), completion in zip(batch_entries, completions):
+            predicted_answer = extract_answer(completion)
+            is_correct = grade_answer(predicted_answer, reference)
+
+            if args.verbose:
+                print("-" * 80)
+                print(f"Example {idx}")
+                print(f"Original question: {question}")
+                print(f"Corrupted question: {corrupted_question}")
+                print(f"Model completion: {completion}")
+                print(f"Parsed answer: {predicted_answer}")
+                print(f"Ground truth: {reference}")
+                print(f"Correct: {is_correct}")
+                print(f"Corrupted tokens: {stats['corrupted_tokens']}")
+                print(f"Range label: {range_label}")
+
+            results.append(
+                ExampleResult(
+                    idx=idx,
+                    original_question=question,
+                    corrupted_question=corrupted_question,
+                    reference_answer=reference,
+                    predicted_answer=predicted_answer,
+                    is_correct=is_correct,
+                    corruption_stats=stats,
+                    raw_completion=completion,
+                    corruption_rate=corruption_rate,
+                    range_label=range_label,
+                )
             )
-        )
 
     return results
 
@@ -565,30 +652,14 @@ def format_span_label(spans: Optional[List[Tuple[int, int]]]) -> str:
     return ",".join(normalized)
 
 
-def main() -> None:
-    args = parse_args()
-    dataset = load_samples(args)
-    model, tokenizer = load_model_and_tokenizer(args.model_path, args.device)
-
-    # Determine corruption rates to evaluate
-    if args.corruption_rates:
-        corruption_rates = [float(x.strip()) for x in args.corruption_rates.split(",") if x.strip()]
-    else:
-        corruption_rates = [args.corruption_rate]
-
-    # Determine span configurations
-    range_specs: List[Optional[List[Tuple[int, int]]]] = []
-    if args.range_sweep:
-        parsed = parse_range_spec(args.range_sweep)
-        for span in parsed:
-            range_specs.append(None if span == (-1, -1) else [span])
-    elif args.corrupt_ranges:
-        spans = parse_range_spec(args.corrupt_ranges)
-        normalized = [None if span == (-1, -1) else [span] for span in spans]
-        range_specs.extend(normalized)
-    else:
-        range_specs.append(None)
-
+def run_experiments(
+    args: argparse.Namespace,
+    dataset: Dataset,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    corruption_rates: Sequence[float],
+    range_specs: Sequence[Optional[List[Tuple[int, int]]]],
+) -> Tuple[List[ExampleResult], List[Dict[str, float]]]:
     all_results: List[ExampleResult] = []
     summary_rows: List[Dict[str, float]] = []
 
@@ -624,6 +695,172 @@ def main() -> None:
 
             summary_rows.append(metrics)
             all_results.extend(results)
+
+    return all_results, summary_rows
+
+
+def _make_shard_path(base: Path, suffix: str) -> Path:
+    return base.with_name(base.stem + suffix + base.suffix)
+
+
+def _worker_entry(
+    args_dict: Dict[str, Any],
+    indices: List[int],
+    device_id: str,
+    corruption_rates: Sequence[float],
+    range_specs: Sequence[Optional[List[Tuple[int, int]]]],
+    output_path: Optional[Path],
+    summary_path: Optional[Path],
+):
+    worker_args = argparse.Namespace(**args_dict)
+    worker_args.device_ids = None
+    worker_args.device = f"cuda:{device_id}" if torch.cuda.is_available() else worker_args.device
+    worker_args.output_path = output_path
+    worker_args.summary_path = summary_path
+    worker_args.device_map = None  # ensure single GPU usage per worker
+
+    dataset = load_samples(worker_args)
+    if indices:
+        dataset = dataset.select(indices)
+
+    model, tokenizer = load_model_and_tokenizer(
+        worker_args.model_path,
+        worker_args.device,
+        device_map=worker_args.device_map,
+        torch_dtype_str=worker_args.torch_dtype,
+    )
+
+    all_results, summary_rows = run_experiments(
+        worker_args,
+        dataset,
+        model,
+        tokenizer,
+        corruption_rates,
+        range_specs,
+    )
+
+    if worker_args.output_path:
+        save_results(worker_args.output_path, all_results)
+
+    if worker_args.summary_path:
+        worker_args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with worker_args.summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary_rows, f, ensure_ascii=False, indent=2)
+
+
+def run_multi_gpu(
+    args: argparse.Namespace,
+    dataset: Dataset,
+    corruption_rates: Sequence[float],
+    range_specs: Sequence[Optional[List[Tuple[int, int]]]],
+) -> None:
+    if not args.device_ids:
+        raise ValueError("device_ids must be provided for multi-GPU execution")
+
+    device_ids = [d.strip() for d in args.device_ids.split(",") if d.strip()]
+    if not device_ids:
+        raise ValueError("No valid device ids parsed from --device_ids")
+
+    total_examples = len(dataset)
+    shard_size = math.ceil(total_examples / len(device_ids)) if device_ids else total_examples
+
+    args_dict = vars(args).copy()
+    processes: List[mp.Process] = []
+    shard_output_paths: List[Tuple[Optional[Path], Optional[Path]]] = []
+
+    for rank, device_id in enumerate(device_ids):
+        start = rank * shard_size
+        end = min(start + shard_size, total_examples)
+        if start >= end:
+            continue
+
+        shard_indices = list(range(start, end))
+        output_path = None
+        summary_path = None
+        if args.output_path:
+            output_path = _make_shard_path(args.output_path, f".gpu{device_id}")
+        if args.summary_path:
+            summary_path = _make_shard_path(args.summary_path, f".gpu{device_id}")
+
+        p = mp.Process(
+            target=_worker_entry,
+            args=(args_dict, shard_indices, device_id, corruption_rates, range_specs, output_path, summary_path),
+        )
+        p.start()
+        processes.append(p)
+        shard_output_paths.append((output_path, summary_path))
+
+    for p in processes:
+        p.join()
+
+    if args.output_path:
+        args.output_path.parent.mkdir(parents=True, exist_ok=True)
+        with args.output_path.open("w", encoding="utf-8") as fout:
+            for partial_output, _ in shard_output_paths:
+                if partial_output and partial_output.exists():
+                    with partial_output.open("r", encoding="utf-8") as fin:
+                        shutil.copyfileobj(fin, fout)
+                    partial_output.unlink()
+        print(f"Detailed predictions saved to {args.output_path}")
+
+    if args.summary_path:
+        combined_summary: List[Dict[str, float]] = []
+        for _, partial_summary in shard_output_paths:
+            if partial_summary and partial_summary.exists():
+                with partial_summary.open("r", encoding="utf-8") as f:
+                    combined_summary.extend(json.load(f))
+                partial_summary.unlink()
+
+        args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with args.summary_path.open("w", encoding="utf-8") as f:
+            json.dump(combined_summary, f, ensure_ascii=False, indent=2)
+        print(f"Summary metrics saved to {args.summary_path}")
+
+
+def main() -> None:
+    args = parse_args()
+    dataset = load_samples(args)
+
+    # Determine corruption rates to evaluate
+    if args.corruption_rates:
+        corruption_rates = [float(x.strip()) for x in args.corruption_rates.split(",") if x.strip()]
+    else:
+        corruption_rates = [args.corruption_rate]
+
+    # Determine span configurations
+    range_specs: List[Optional[List[Tuple[int, int]]]] = []
+    if args.range_sweep:
+        parsed = parse_range_spec(args.range_sweep)
+        for span in parsed:
+            range_specs.append(None if span == (-1, -1) else [span])
+    elif args.corrupt_ranges:
+        spans = parse_range_spec(args.corrupt_ranges)
+        normalized = [None if span == (-1, -1) else [span] for span in spans]
+        range_specs.extend(normalized)
+    else:
+        range_specs.append(None)
+
+    if args.device_ids:
+        run_multi_gpu(args, dataset, corruption_rates, range_specs)
+        return
+
+    model, tokenizer = load_model_and_tokenizer(
+        args.model_path,
+        args.device,
+        device_map=args.device_map,
+        torch_dtype_str=args.torch_dtype,
+    )
+
+    set_seed(args.seed)
+
+    all_results, summary_rows = run_experiments(
+        args,
+        dataset,
+        model,
+        tokenizer,
+        corruption_rates,
+        range_specs,
+    )
 
     if args.output_path:
         save_results(args.output_path, all_results)
