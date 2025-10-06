@@ -1,5 +1,3 @@
-![# LLaMA Factory](assets/Ensemble-Hub.gif)
-
 # Ensemble-Hub
 
 **Ensemble-Hub** is an open-source toolkit for large language model (LLM) ensemble inference. 
